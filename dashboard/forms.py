@@ -197,6 +197,12 @@ class SheetImportForm(forms.Form):
         label='Link da planilha',
         widget=forms.URLInput(attrs={'class': 'form-control', 'placeholder': 'https://docs.google.com/spreadsheets/d/...'}),
     )
+    delete_missing = forms.BooleanField(
+        required=False,
+        initial=True,
+        label='Apagar do sistema quem saiu da planilha',
+        widget=forms.CheckboxInput(attrs={'class': 'form-check-input'}),
+    )
 
 
 class PreOrderPaymentForm(forms.Form):

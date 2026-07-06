@@ -333,15 +333,16 @@ def _read_preorders_from_sheet(sheet_tab=''):
     return imported_rows
 
 
-def _sync_preorders_from_sheet(sheet_link, created_by=None):
+def _sync_preorders_from_sheet(sheet_link, created_by=None, delete_missing=False):
     sheet_link = str(sheet_link or '').strip()
     if not sheet_link:
         sheet_link = _get_saved_preorder_sheet_link()
     if not sheet_link:
-        return 0
+        return 0, 0
 
     imported_rows = _read_preorders_from_sheet(sheet_link)
     created_count = 0
+    deleted_count = 0
     with transaction.atomic():
         for row in imported_rows:
             if PreOrderRecord.objects.filter(external_key=row['external_key']).exists():
@@ -365,7 +366,18 @@ def _sync_preorders_from_sheet(sheet_link, created_by=None):
                 imported_at=timezone.now(),
             )
             created_count += 1
-    return created_count
+
+        if delete_missing and imported_rows:
+            imported_keys = {row['external_key'] for row in imported_rows}
+            obsolete_preorders = PreOrderRecord.objects.filter(
+                source=PreOrderSourceChoices.SHEET,
+            ).exclude(external_key__in=imported_keys)
+            for preorder in obsolete_preorders:
+                _release_reserved_inventory(preorder.color, preorder.size, preorder.quantity)
+                preorder.delete()
+                deleted_count += 1
+
+    return created_count, deleted_count
 
 
 def _get_saved_aconselhamento_sheet_link():
@@ -473,6 +485,14 @@ def _reserve_inventory(color, size, quantity):
     sku.reserved_quantity += quantity
     sku.save(update_fields=['reserved_quantity', 'updated_at'])
     return True, sku
+
+
+def _release_reserved_inventory(color, size, quantity):
+    _ensure_inventory_grid()
+    sku = InventorySku.objects.select_for_update().get(color=color, size=size)
+    sku.reserved_quantity = max(0, sku.reserved_quantity - int(quantity or 0))
+    sku.save(update_fields=['reserved_quantity', 'updated_at'])
+    return sku
 
 
 def _sell_inventory(color, size, quantity):
@@ -1444,14 +1464,30 @@ def preorder_dashboard(request):
 
     if request.method == 'POST' and request.POST.get('action') == 'import_sheet':
         sheet_link = (import_form.data.get('sheet_link') or '').strip()
+        delete_missing = import_form.data.get('delete_missing') in {'on', 'true', '1'}
         if sheet_link:
             _save_preorder_sheet_link(sheet_link)
-        created_count = _sync_preorders_from_sheet(sheet_link, created_by=request.user)
+        created_count, deleted_count = _sync_preorders_from_sheet(
+            sheet_link,
+            created_by=request.user,
+            delete_missing=delete_missing,
+        )
         if created_count:
             messages.success(request, f'{created_count} pré-encomendas importadas da planilha.')
-        else:
+        if deleted_count:
+            messages.info(request, f'{deleted_count} pré-encomendas foram apagadas do sistema por não estarem mais na planilha.')
+        if not created_count and not deleted_count:
             messages.error(request, 'Não consegui importar nenhuma linha. Verifique se a planilha está compartilhada com a conta de serviço e se a primeira aba tem os cabeçalhos corretos.')
         return redirect(f"{reverse('preorder_dashboard')}?tab=imports")
+
+    if request.method == 'POST' and request.POST.get('action') == 'delete_preorder':
+        preorder_id = request.POST.get('preorder_id')
+        preorder = get_object_or_404(PreOrderRecord, pk=preorder_id)
+        with transaction.atomic():
+            _release_reserved_inventory(preorder.color, preorder.size, preorder.quantity)
+            preorder.delete()
+        messages.success(request, 'Pré-encomenda apagada do sistema.')
+        return redirect(f"{reverse('preorder_dashboard')}?tab=edit")
 
     if request.method == 'POST' and request.POST.get('action') == 'update_payment' and payment_form.is_valid():
         preorder = get_object_or_404(PreOrderRecord, pk=payment_form.cleaned_data['preorder_id'])
@@ -1466,8 +1502,9 @@ def preorder_dashboard(request):
             return redirect(f"{reverse('preorder_dashboard')}?tab=edit")
 
     auto_imported_count = 0
+    auto_deleted_count = 0
     if request.method == 'GET' and saved_sheet_link:
-        auto_imported_count = _sync_preorders_from_sheet(saved_sheet_link)
+        auto_imported_count, auto_deleted_count = _sync_preorders_from_sheet(saved_sheet_link)
         if auto_imported_count:
             messages.info(request, f'{auto_imported_count} novas pré-encomendas foram sincronizadas automaticamente.')
 
@@ -1494,6 +1531,7 @@ def preorder_dashboard(request):
         'search_query': search_query,
         'saved_sheet_link': saved_sheet_link,
         'auto_imported_count': auto_imported_count,
+        'auto_deleted_count': auto_deleted_count,
         'preorders': preorders,
         'inventory_matrix': inventory_matrix,
         'total_preorders': PreOrderRecord.objects.count(),

@@ -114,6 +114,12 @@
                     {{ import_form.sheet_link }}
                     <div class="form-text">Cole o link da planilha do Google. Depois disso, o sistema reaproveita esse link automaticamente.</div>
                 </div>
+                <div class="col-12 col-md-6 d-flex align-items-end">
+                    <div class="form-check mb-2">
+                        {{ import_form.delete_missing }}
+                        <label class="form-check-label" for="{{ import_form.delete_missing.id_for_label }}">{{ import_form.delete_missing.label }}</label>
+                    </div>
+                </div>
                 <div class="col-12 col-md-3 d-grid align-items-end">
                     <button type="submit" class="btn btn-primary">Importar</button>
                 </div>
@@ -215,6 +221,7 @@
                             <th>Forma</th>
                             <th>Valor</th>
                             <th>Status</th>
+                            <th>Ações</th>
                         </tr>
                     </thead>
                     <tbody>
@@ -224,9 +231,17 @@
                                 <td>{{ item.get_payment_status_display }}</td>
                                 <td>{% if item.payment_status == 'pago' %}R$ {{ item.payment_value|floatformat:2 }}{% else %}-{% endif %}</td>
                                 <td>{{ item.get_status_display }}</td>
+                                <td>
+                                    <form method="post" onsubmit="return confirm('Deseja apagar esta pré-encomenda do sistema?');">
+                                        {% csrf_token %}
+                                        <input type="hidden" name="action" value="delete_preorder">
+                                        <input type="hidden" name="preorder_id" value="{{ item.id }}">
+                                        <button type="submit" class="btn btn-sm btn-outline-danger">Apagar</button>
+                                    </form>
+                                </td>
                             </tr>
                         {% empty %}
-                            <tr><td colspan="4"><p class="empty-state">Nenhuma pré-encomenda cadastrada.</p></td></tr>
+                            <tr><td colspan="5"><p class="empty-state">Nenhuma pré-encomenda cadastrada.</p></td></tr>
                         {% endfor %}
                     </tbody>
                 </table>
