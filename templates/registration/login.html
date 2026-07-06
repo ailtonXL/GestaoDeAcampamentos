@@ -1,0 +1,29 @@
+{% extends 'dashboard/base.html' %}
+
+{% block content %}
+<section class="auth-shell">
+    <div class="auth-card">
+        <p class="eyebrow">Acesso</p>
+        <h2>Entrar no sistema</h2>
+        <p class="hero-card__text">Use seu usuário e senha para acessar o painel. No primeiro acesso, será exigida a troca da senha.</p>
+
+        {% if form.errors %}
+            <div class="alert alert-danger">Usuário ou senha inválidos.</div>
+        {% endif %}
+
+        <form method="post" class="auth-form">
+            {% csrf_token %}
+            <div>
+                <label class="form-label" for="id_username">Usuário</label>
+                <input class="form-control" type="text" name="username" autofocus autocomplete="username" required id="id_username">
+            </div>
+            <div>
+                <label class="form-label" for="id_password">Senha</label>
+                <input class="form-control" type="password" name="password" autocomplete="current-password" required id="id_password">
+            </div>
+            <input type="hidden" name="next" value="{{ next }}">
+            <button type="submit" class="btn btn-primary">Entrar</button>
+        </form>
+    </div>
+</section>
+{% endblock %}

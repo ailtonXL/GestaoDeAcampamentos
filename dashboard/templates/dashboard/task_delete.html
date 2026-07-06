@@ -1,0 +1,22 @@
+{% extends 'dashboard/base.html' %}
+
+{% block content %}
+<section class="hero-card hero-card--compact">
+    <div>
+        <p class="eyebrow">Excluir tarefa</p>
+        <h2>Confirmar exclusão</h2>
+        <p class="hero-card__text">Essa ação remove a tarefa {{ task.titulo }} de {{ task.get_equipe_display }}.</p>
+    </div>
+</section>
+
+<section class="panel-card member-delete-card">
+    <p class="panel-card__note">Essa ação não pode ser desfeita.</p>
+    <div class="d-flex gap-2 flex-wrap">
+        <form method="post" class="m-0">
+            {% csrf_token %}
+            <button type="submit" class="btn btn-danger">Excluir tarefa</button>
+        </form>
+        <a class="btn btn-outline-secondary" href="{{ cancel_url }}">Cancelar</a>
+    </div>
+</section>
+{% endblock %}

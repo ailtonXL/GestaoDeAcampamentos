@@ -1,0 +1,173 @@
+{% extends 'dashboard/base.html' %}
+
+{% block content %}
+<section class="hero-card hero-card--compact">
+    <div>
+        <p class="eyebrow">NoBreak</p>
+        <h2>Aba de Preparo</h2>
+        <p class="hero-card__text">Receba respostas de formulário, salve no banco e publique atividades no Google Classroom sem sair do painel.</p>
+    </div>
+    <div class="hero-card__stats">
+        <div>
+            <strong>{{ registros|length }}</strong>
+            <span>Registros recentes</span>
+        </div>
+        <div>
+            <strong>{% if formspree_endpoint_configured %}Ativa{% else %}Inativa{% endif %}</strong>
+            <span>API gratuita (Formspree)</span>
+        </div>
+        <div>
+            <strong>{% if google_connected %}Conectado{% else %}Desconectado{% endif %}</strong>
+            <span>Google Classroom</span>
+        </div>
+    </div>
+</section>
+
+<section class="panel-card panel-card--spaced">
+    <div class="panel-card__header panel-card__header--split">
+        <div>
+            <p class="eyebrow">Integrações</p>
+            <h3>Google Classroom</h3>
+            <p class="panel-card__note">Conecte sua conta Google para publicar atividades direto nesta aba.</p>
+        </div>
+        <div class="d-flex gap-2 flex-wrap">
+            {% if google_connected %}
+                <a class="summary-card__link" href="{% url 'preparo_google_disconnect' %}">Desconectar Google</a>
+            {% else %}
+                <a class="summary-card__link" href="{% url 'preparo_google_connect' %}">Conectar Google Classroom</a>
+            {% endif %}
+        </div>
+    </div>
+
+    {% if messages %}
+        {% for message in messages %}
+            <div class="alert alert-{{ message.tags|default:'info' }} mt-2">{{ message }}</div>
+        {% endfor %}
+    {% endif %}
+
+    {% if google_connected and google_courses %}
+        <div class="mt-3">
+            <p class="mb-1"><strong>Turmas ativas encontradas:</strong></p>
+            <ul class="mb-0">
+                {% for course in google_courses %}
+                    <li>{{ course.name }} {% if course.section %}({{ course.section }}){% endif %} - ID: {{ course.id }}</li>
+                {% endfor %}
+            </ul>
+        </div>
+    {% endif %}
+</section>
+
+<section class="panel-card panel-card--spaced">
+    <div class="panel-card__header">
+        <p class="eyebrow">Formulário</p>
+        <h3>Novo registro de preparo</h3>
+        <p class="panel-card__note">Os dados são salvos no banco local e podem ser enviados para API externa e Google Classroom.</p>
+    </div>
+
+    <form method="post">
+        {% csrf_token %}
+        {% if form.non_field_errors %}
+            <div class="alert alert-danger">{{ form.non_field_errors }}</div>
+        {% endif %}
+
+        <div class="row g-3">
+            <div class="col-12 col-md-6">
+                <label class="form-label" for="{{ form.nome_completo.id_for_label }}">{{ form.nome_completo.label }}</label>
+                {{ form.nome_completo }}
+                {% for error in form.nome_completo.errors %}<div class="text-danger small mt-1">{{ error }}</div>{% endfor %}
+            </div>
+            <div class="col-12 col-md-3">
+                <label class="form-label" for="{{ form.email.id_for_label }}">{{ form.email.label }}</label>
+                {{ form.email }}
+                {% for error in form.email.errors %}<div class="text-danger small mt-1">{{ error }}</div>{% endfor %}
+            </div>
+            <div class="col-12 col-md-3">
+                <label class="form-label" for="{{ form.telefone.id_for_label }}">{{ form.telefone.label }}</label>
+                {{ form.telefone }}
+                {% for error in form.telefone.errors %}<div class="text-danger small mt-1">{{ error }}</div>{% endfor %}
+            </div>
+            <div class="col-12 col-md-8">
+                <label class="form-label" for="{{ form.titulo_atividade.id_for_label }}">{{ form.titulo_atividade.label }}</label>
+                {{ form.titulo_atividade }}
+                {% for error in form.titulo_atividade.errors %}<div class="text-danger small mt-1">{{ error }}</div>{% endfor %}
+            </div>
+            <div class="col-12 col-md-4">
+                <label class="form-label" for="{{ form.prazo_entrega.id_for_label }}">{{ form.prazo_entrega.label }}</label>
+                {{ form.prazo_entrega }}
+                {% for error in form.prazo_entrega.errors %}<div class="text-danger small mt-1">{{ error }}</div>{% endfor %}
+            </div>
+            <div class="col-12">
+                <label class="form-label" for="{{ form.descricao_atividade.id_for_label }}">{{ form.descricao_atividade.label }}</label>
+                {{ form.descricao_atividade }}
+                {% for error in form.descricao_atividade.errors %}<div class="text-danger small mt-1">{{ error }}</div>{% endfor %}
+            </div>
+            <div class="col-12 col-md-5">
+                <label class="form-label" for="{{ form.google_course_id.id_for_label }}">{{ form.google_course_id.label }}</label>
+                {{ form.google_course_id }}
+                {% for error in form.google_course_id.errors %}<div class="text-danger small mt-1">{{ error }}</div>{% endfor %}
+                <div class="form-text">Preencha somente se desejar enviar para o Classroom.</div>
+            </div>
+            <div class="col-12 col-md-4 d-flex align-items-end">
+                <div class="form-check">
+                    {{ form.publicar_no_classroom }}
+                    <label class="form-check-label" for="{{ form.publicar_no_classroom.id_for_label }}">{{ form.publicar_no_classroom.label }}</label>
+                </div>
+            </div>
+            <div class="col-12 col-md-3 d-grid d-md-flex align-items-end justify-content-md-end">
+                <button type="submit" class="btn btn-primary">Salvar registro</button>
+            </div>
+        </div>
+    </form>
+</section>
+
+<section class="panel-card">
+    <div class="panel-card__header">
+        <p class="eyebrow">Histórico</p>
+        <h3>Últimos envios</h3>
+    </div>
+
+    {% if registros %}
+        <div class="table-responsive">
+            <table class="table team-table align-middle mb-0">
+                <thead>
+                    <tr>
+                        <th>Atividade</th>
+                        <th>Responsável</th>
+                        <th>API externa</th>
+                        <th>Classroom</th>
+                        <th>Criado em</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for item in registros %}
+                        <tr>
+                            <td>
+                                <strong>{{ item.titulo_atividade }}</strong>
+                                {% if item.descricao_atividade %}<div class="small text-muted">{{ item.descricao_atividade }}</div>{% endif %}
+                            </td>
+                            <td>
+                                {{ item.nome_completo }}
+                                {% if item.email %}<div class="small text-muted">{{ item.email }}</div>{% endif %}
+                            </td>
+                            <td>
+                                <span class="status-pill {% if item.external_sync_status == 'sucesso' %}status-pill--concluida{% elif item.external_sync_status == 'falha' %}status-pill--pendente{% else %}status-pill--inativo{% endif %}">
+                                    {{ item.get_external_sync_status_display }}
+                                </span>
+                            </td>
+                            <td>
+                                <span class="status-pill {% if item.classroom_status == 'sucesso' %}status-pill--concluida{% elif item.classroom_status == 'falha' %}status-pill--pendente{% else %}status-pill--inativo{% endif %}">
+                                    {{ item.get_classroom_status_display }}
+                                </span>
+                                {% if item.classroom_coursework_id %}<div class="small text-muted">ID: {{ item.classroom_coursework_id }}</div>{% endif %}
+                            </td>
+                            <td>{{ item.criado_em|date:'d/m/Y H:i' }}</td>
+                        </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    {% else %}
+        <p class="empty-state">Nenhum registro de preparo ainda.</p>
+    {% endif %}
+</section>
+{% endblock %}

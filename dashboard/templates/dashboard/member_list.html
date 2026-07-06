@@ -1,0 +1,100 @@
+{% extends 'dashboard/base.html' %}
+
+{% block content %}
+<section class="hero-card hero-card--compact">
+    <div>
+        <p class="eyebrow">Aba geral</p>
+        <h2>Todos os membros</h2>
+        <p class="hero-card__text">Pesquise por nome ou setor, edite o vínculo e redistribua pessoas entre as equipes com rapidez.</p>
+    </div>
+    <div class="hero-card__stats">
+        <div>
+            <strong>{{ total_members }}</strong>
+            <span>Total de membros</span>
+        </div>
+        <div>
+            <strong>{{ active_members }}</strong>
+            <span>Ativos</span>
+        </div>
+        <div>
+            <strong>{{ inactive_members }}</strong>
+            <span>Inativos</span>
+        </div>
+    </div>
+</section>
+
+<section class="panel-card panel-card--spaced">
+    <div class="panel-card__header panel-card__header--split">
+        <div>
+            <p class="eyebrow">Pesquisa</p>
+            <h3>Filtrar por nome e setor</h3>
+        </div>
+        <a class="summary-card__link" href="{% url 'membro_create' %}">Adicionar membro</a>
+    </div>
+    <form method="get">
+        <div class="row g-3 align-items-end">
+            <div class="col-12 col-md-5">
+                <label class="form-label" for="id_q">Nome</label>
+                <input class="form-control" type="text" id="id_q" name="q" value="{{ search_query }}" placeholder="Digite um nome" />
+            </div>
+            <div class="col-12 col-md-4">
+                <label class="form-label" for="id_equipe">Setor</label>
+                <select class="form-select" id="id_equipe" name="equipe">
+                    <option value="">Todos os setores</option>
+                    {% for value, label in team_choices %}
+                        <option value="{{ value }}" {% if selected_team == value %}selected{% endif %}>{{ label }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+            <div class="col-12 col-md-3 d-grid">
+                <button type="submit" class="btn btn-primary">Buscar</button>
+            </div>
+        </div>
+    </form>
+</section>
+
+<section class="panel-card">
+    <div class="table-responsive">
+        <table class="table team-table align-middle mb-0">
+            <thead>
+                <tr>
+                    <th>Nome</th>
+                    <th>Setor</th>
+                    <th>Status</th>
+                    <th>Criado em</th>
+                    <th>Ações</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% if members %}
+                    {% for member in members %}
+                        <tr>
+                            <td><strong>{{ member.nome }}</strong></td>
+                            <td>{{ member.get_equipe_display }}</td>
+                            <td>
+                                <span class="status-pill {% if member.ativo %}status-pill--ativo{% else %}status-pill--inativo{% endif %}">
+                                    {% if member.ativo %}Ativo{% else %}Inativo{% endif %}
+                                </span>
+                            </td>
+                            <td>{{ member.criado_em|date:'d/m/Y' }}</td>
+                            <td>
+                                <div class="member-list__actions">
+                                    <a class="summary-card__link" href="{% url 'membro_update' member.pk %}">Editar</a>
+                                    <form method="post" action="{% url 'membro_delete' member.pk %}" class="m-0">
+                                        {% csrf_token %}
+                                        <button type="submit" class="member-delete-link">Excluir</button>
+                                    </form>
+                                </div>
+                            </td>
+                        </tr>
+                    {% endfor %}
+                {% else %}
+                    <tr>
+                        <td colspan="5"><p class="empty-state">Nenhum membro encontrado para os filtros informados.</p></td>
+                    </tr>
+                {% endif %}
+            </tbody>
+        </table>
+    </div>
+</section>
+{% endblock %}

@@ -1,0 +1,81 @@
+{% extends 'dashboard/base.html' %}
+
+{% block content %}
+<section class="hero-card">
+    <div>
+        <p class="eyebrow">Visão geral do acampamento</p>
+        <h2>Resumo operacional das equipes</h2>
+        <p class="hero-card__text">Acompanhe pendências, andamento e o saldo estimado do financeiro em uma única tela.</p>
+    </div>
+    <div class="hero-card__stats">
+        <div>
+            <strong>{{ total_members }}</strong>
+            <span>Membros ativos</span>
+        </div>
+        <div>
+            <strong>{{ total_pending }}</strong>
+            <span>Pendências abertas</span>
+        </div>
+        <div>
+            <strong>{{ finance_total }}</strong>
+            <span>Saldo estimado</span>
+        </div>
+    </div>
+</section>
+
+<section class="cards-grid">
+    {% for card in cards %}
+        <article class="summary-card">
+            <div class="summary-card__header">
+                <div>
+                    <p class="summary-card__title">{{ card.title }}</p>
+                    <p class="summary-card__subtitle">{{ card.description }}</p>
+                </div>
+                <a href="{% url card.url_name %}" class="summary-card__link">Abrir</a>
+            </div>
+            <div class="summary-card__value">{{ card.value }}</div>
+            <div class="summary-card__meta">{{ card.subtitle }}</div>
+        </article>
+    {% endfor %}
+</section>
+
+<section class="dashboard-grid">
+    <article class="panel-card panel-card--chart">
+        <div class="panel-card__header">
+            <div>
+                <p class="eyebrow">Status geral</p>
+                <h3>Distribuição das tarefas</h3>
+            </div>
+        </div>
+        <div class="chart-wrap">
+            <canvas id="overviewChart" height="260"></canvas>
+        </div>
+        {{ chart_labels|json_script:'chart-labels' }}
+        {{ chart_values|json_script:'chart-values' }}
+    </article>
+
+    <article class="panel-card">
+        <div class="panel-card__header">
+            <div>
+                <p class="eyebrow">Resumo rápido</p>
+                <h3>Indicadores principais</h3>
+            </div>
+        </div>
+        <div class="metric-list">
+            <div class="metric-list__item">
+                <span>Pendentes</span>
+                <strong>{{ total_pending }}</strong>
+            </div>
+            <div class="metric-list__item">
+                <span>Em andamento</span>
+                <strong>{{ total_progress }}</strong>
+            </div>
+            <div class="metric-list__item">
+                <span>Concluídas</span>
+                <strong>{{ total_done }}</strong>
+            </div>
+        </div>
+        <p class="panel-card__note">As cards laterais mostram a quantidade de pendências por equipe. O cartão de Financeiro exibe o saldo estimado em reais.</p>
+    </article>
+</section>
+{% endblock %}

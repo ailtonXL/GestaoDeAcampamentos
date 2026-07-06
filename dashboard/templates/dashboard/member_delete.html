@@ -1,0 +1,22 @@
+{% extends 'dashboard/base.html' %}
+
+{% block content %}
+<section class="hero-card hero-card--compact">
+    <div>
+        <p class="eyebrow">Excluir membro</p>
+        <h2>Confirmar exclusão</h2>
+        <p class="hero-card__text">Essa ação remove permanentemente o registro de {{ member.nome }} do setor {{ member.get_equipe_display }}.</p>
+    </div>
+</section>
+
+<section class="panel-card member-delete-card">
+    <p class="panel-card__note">Se você só quer trocar a pessoa de setor, use o botão de editar em vez de excluir.</p>
+    <div class="d-flex gap-2 flex-wrap">
+        <form method="post" class="m-0">
+            {% csrf_token %}
+            <button type="submit" class="btn btn-danger">Excluir membro</button>
+        </form>
+        <a class="btn btn-outline-secondary" href="{{ cancel_url }}">Cancelar</a>
+    </div>
+</section>
+{% endblock %}

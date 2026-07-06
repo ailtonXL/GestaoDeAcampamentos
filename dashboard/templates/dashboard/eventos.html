@@ -1,0 +1,157 @@
+{% extends 'dashboard/base.html' %}
+
+{% block content %}
+<section class="hero-card hero-card--compact">
+    <div>
+        <p class="eyebrow">Equipe Eventos</p>
+        <h2>Agenda e programação</h2>
+        <p class="hero-card__text">Exemplo de página específica da equipe Eventos, estendendo a base do dashboard.</p>
+    </div>
+    <div class="hero-card__stats">
+        <div>
+            <strong>{{ task_total }}</strong>
+            <span>Total de tarefas</span>
+        </div>
+        <div>
+            <strong>{{ task_pending }}</strong>
+            <span>Pendências</span>
+        </div>
+        <div>
+            <strong>{{ task_done }}</strong>
+            <span>Concluídas</span>
+        </div>
+    </div>
+</section>
+
+{% if can_manage_membership %}
+    <section class="panel-card panel-card--spaced member-quick-card">
+        <div class="panel-card__header panel-card__header--split">
+            <div>
+                <p class="eyebrow">Adicionar pessoa</p>
+                <h3>Novo membro no setor</h3>
+                <p class="panel-card__note">Use este formulário para incluir alguém nesta equipe rapidamente.</p>
+            </div>
+            {% if can_view_members_index %}
+                <a class="summary-card__link" href="{{ members_index_url }}">Ver todos os membros</a>
+            {% endif %}
+        </div>
+        <form method="post" action="{{ member_create_url }}" class="member-quick-form">
+            {% csrf_token %}
+            {% if member_form.non_field_errors %}
+                <div class="alert alert-danger">{{ member_form.non_field_errors }}</div>
+            {% endif %}
+            <div class="member-quick-form__grid">
+                <div class="member-quick-form__field">
+                    <label class="form-label" for="{{ member_form.nome.id_for_label }}">{{ member_form.nome.label }}</label>
+                    {{ member_form.nome }}
+                    {% for error in member_form.nome.errors %}<div class="text-danger small mt-1">{{ error }}</div>{% endfor %}
+                </div>
+                <div class="member-quick-form__field member-quick-form__check">
+                    <div class="form-check">
+                        {{ member_form.ativo }}
+                        <label class="form-check-label" for="{{ member_form.ativo.id_for_label }}">{{ member_form.ativo.label }}</label>
+                    </div>
+                    {% for error in member_form.ativo.errors %}<div class="text-danger small mt-1">{{ error }}</div>{% endfor %}
+                </div>
+                <div class="member-quick-form__action">
+                    <button type="submit" class="btn btn-primary">Adicionar</button>
+                </div>
+            </div>
+        </form>
+    </section>
+{% elif can_view_members_index %}
+    <section class="panel-card panel-card--spaced">
+        <div class="panel-card__header panel-card__header--split">
+            <div>
+                <p class="eyebrow">Membros</p>
+                <h3>Visualização apenas</h3>
+                <p class="panel-card__note">Seu cargo não permite adicionar ou mover pessoas entre equipes.</p>
+            </div>
+            <a class="summary-card__link" href="{{ members_index_url }}">Ver todos os membros</a>
+        </div>
+    </section>
+{% endif %}
+
+<section class="dashboard-grid dashboard-grid--teams">
+    <article class="panel-card">
+        <div class="panel-card__header">
+            <div>
+                <p class="eyebrow">Membros</p>
+                <h3>Equipe Eventos</h3>
+            </div>
+        </div>
+        {% if members %}
+            <ul class="member-list">
+                {% for member in members %}
+                    <li>
+                        <div>
+                            <strong>{{ member.nome }}</strong>
+                            <span>{{ member.get_equipe_display }}</span>
+                        </div>
+                        {% if can_manage_membership %}
+                            <div class="member-list__actions">
+                                <a class="summary-card__link" href="{% url 'membro_update' member.pk %}">Editar</a>
+                                <form method="post" action="{% url member_delete_url_name member.pk %}" class="m-0">
+                                    {% csrf_token %}
+                                    <input type="hidden" name="next" value="{{ team_slug }}">
+                                    <button type="submit" class="member-delete-link">Excluir</button>
+                                </form>
+                            </div>
+                        {% endif %}
+                    </li>
+                {% endfor %}
+            </ul>
+        {% else %}
+            <p class="empty-state">Nenhum membro cadastrado para esta equipe.</p>
+        {% endif %}
+    </article>
+
+    <article class="panel-card">
+        <div class="panel-card__header">
+            <div>
+                <p class="eyebrow">Tarefas</p>
+                <h3>Programação em andamento</h3>
+            </div>
+            <a class="summary-card__link" href="{{ task_create_url }}">Adicionar tarefa</a>
+        </div>
+        {% if tasks %}
+            <div class="table-responsive">
+                <table class="table team-table align-middle mb-0">
+                    <thead>
+                        <tr>
+                            <th>Tarefa</th>
+                            <th>Status</th>
+                            <th>Responsável</th>
+                            <th>Prazo</th>
+                            <th class="text-end">Ações</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for task in tasks %}
+                            <tr>
+                                <td>
+                                    <strong>{{ task.titulo }}</strong>
+                                    {% if task.descricao %}
+                                        <div class="small text-muted">{{ task.descricao }}</div>
+                                    {% endif %}
+                                </td>
+                                <td><span class="status-pill status-pill--{{ task.status }}">{{ task.get_status_display }}</span></td>
+                                <td>{{ task.responsavel.nome|default:'Sem responsável' }}</td>
+                                <td>{{ task.prazo|default:'-' }}</td>
+                                <td>
+                                    <div class="task-actions">
+                                        <a class="summary-card__link" href="{% url task_update_url_name task.pk %}">Editar</a>
+                                        <a class="member-delete-link" href="{% url task_delete_url_name task.pk %}">Excluir</a>
+                                    </div>
+                                </td>
+                            </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+        {% else %}
+            <p class="empty-state">Nenhuma tarefa cadastrada para esta equipe.</p>
+        {% endif %}
+    </article>
+</section>
+{% endblock %}
