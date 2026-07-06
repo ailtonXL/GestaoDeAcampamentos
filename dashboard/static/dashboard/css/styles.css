@@ -532,6 +532,117 @@ a {
     padding: 4px 0;
 }
 
+.dashboard-grid--aconselhamento {
+    grid-template-columns: minmax(300px, 360px) minmax(0, 1fr);
+    align-items: start;
+}
+
+.aconselhamento-lateral {
+    min-height: 100%;
+}
+
+.campista-list,
+.sala-grid,
+.historico-list {
+    display: grid;
+    gap: 12px;
+}
+
+.campista-card,
+.historico-item,
+.sala-card {
+    border: 1px solid var(--border);
+    border-radius: 16px;
+    background: var(--surface-2);
+    box-shadow: 0 8px 18px rgba(14, 26, 22, 0.06);
+}
+
+.campista-card {
+    display: grid;
+    gap: 4px;
+    padding: 12px;
+    cursor: grab;
+}
+
+.campista-card--mini {
+    cursor: grab;
+}
+
+.campista-card strong,
+.historico-item strong {
+    display: block;
+}
+
+.campista-card span,
+.historico-item span,
+.historico-item small,
+.sala-card__obs,
+.sala-card__header p,
+.drop-target__label {
+    color: var(--muted);
+}
+
+.drop-target {
+    border: 1px dashed rgba(45, 106, 79, 0.32);
+    border-radius: 18px;
+    padding: 14px;
+    transition: background-color 140ms ease, border-color 140ms ease, transform 140ms ease;
+}
+
+.drop-target--sidebar {
+    min-height: 220px;
+    background: rgba(45, 106, 79, 0.04);
+}
+
+.drop-target--ativa {
+    border-color: var(--primary);
+    background: rgba(45, 106, 79, 0.08);
+    transform: scale(1.01);
+}
+
+.drop-target__label {
+    font-size: 0.8rem;
+    font-weight: 600;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    margin-bottom: 10px;
+}
+
+.sala-card {
+    padding: 16px;
+}
+
+.sala-card--lotada {
+    border-color: rgba(166, 27, 27, 0.3);
+    background: rgba(166, 27, 27, 0.04);
+}
+
+.sala-card__header {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 12px;
+    margin-bottom: 12px;
+}
+
+.sala-card__header h4 {
+    margin: 0;
+    font-size: 1.05rem;
+}
+
+.sala-card__campos {
+    display: grid;
+    gap: 10px;
+}
+
+.historico-item {
+    padding: 12px 14px;
+}
+
+.historico-item p {
+    margin: 6px 0 0;
+}
+
 .auth-shell {
     min-height: calc(100vh - 180px);
     display: grid;
@@ -584,6 +695,10 @@ a {
     }
 
     .member-quick-form__grid {
+        grid-template-columns: 1fr;
+    }
+
+    .dashboard-grid--aconselhamento {
         grid-template-columns: 1fr;
     }
 }

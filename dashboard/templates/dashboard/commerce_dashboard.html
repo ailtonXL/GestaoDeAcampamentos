@@ -1,0 +1,196 @@
+{% extends 'dashboard/base.html' %}
+
+{% block content %}
+<section class="hero-card hero-card--compact">
+    <div>
+        <p class="eyebrow">Lojinha e Cantina</p>
+        <h2>Estoque e financeiro</h2>
+        <p class="hero-card__text">Vendas públicas com baixa automática no estoque e resumo financeiro por forma de pagamento.</p>
+    </div>
+    <div class="hero-card__stats">
+        <div><strong>R$ {{ total_pix_cash|floatformat:2 }}</strong><span>Pix/Dinheiro</span></div>
+        <div><strong>R$ {{ total_card|floatformat:2 }}</strong><span>Cartão</span></div>
+        <div><strong>R$ {{ total_sales|floatformat:2 }}</strong><span>Total das vendas</span></div>
+    </div>
+</section>
+
+{% if messages %}
+    {% for message in messages %}
+        <div class="alert alert-{{ message.tags|default:'info' }}">{{ message }}</div>
+    {% endfor %}
+{% endif %}
+
+<ul class="nav nav-tabs mb-3">
+    <li class="nav-item"><a class="nav-link {% if active_tab == 'inventory' %}active{% endif %}" href="?tab=inventory">Estoque</a></li>
+    <li class="nav-item"><a class="nav-link {% if active_tab == 'stock_add' %}active{% endif %}" href="?tab=stock_add">Adicionar estoque</a></li>
+    <li class="nav-item"><a class="nav-link {% if active_tab == 'finance' %}active{% endif %}" href="?tab=finance">Financeiro</a></li>
+</ul>
+
+<div class="tab-content">
+    <div class="tab-pane fade {% if active_tab == 'inventory' %}show active{% endif %}">
+        <section class="panel-card panel-card--spaced">
+            <div class="panel-card__header">
+                <p class="eyebrow">Vendas</p>
+                <h3>Registrar venda</h3>
+            </div>
+            <form method="post" class="row g-3">
+                {% csrf_token %}
+                <input type="hidden" name="action" value="sale">
+                <div class="col-12 col-md-4">
+                    <label class="form-label" for="{{ sale_form.product_name.id_for_label }}">{{ sale_form.product_name.label }}</label>
+                    {{ sale_form.product_name }}
+                    {% for error in sale_form.product_name.errors %}<div class="text-danger small mt-1">{{ error }}</div>{% endfor %}
+                </div>
+                <div class="col-6 col-md-2">
+                    <label class="form-label" for="{{ sale_form.color.id_for_label }}">{{ sale_form.color.label }}</label>
+                    {{ sale_form.color }}
+                    {% for error in sale_form.color.errors %}<div class="text-danger small mt-1">{{ error }}</div>{% endfor %}
+                </div>
+                <div class="col-6 col-md-2">
+                    <label class="form-label" for="{{ sale_form.size.id_for_label }}">{{ sale_form.size.label }}</label>
+                    {{ sale_form.size }}
+                    {% for error in sale_form.size.errors %}<div class="text-danger small mt-1">{{ error }}</div>{% endfor %}
+                </div>
+                <div class="col-6 col-md-2">
+                    <label class="form-label" for="{{ sale_form.quantity.id_for_label }}">{{ sale_form.quantity.label }}</label>
+                    {{ sale_form.quantity }}
+                    {% for error in sale_form.quantity.errors %}<div class="text-danger small mt-1">{{ error }}</div>{% endfor %}
+                </div>
+                <div class="col-6 col-md-2">
+                    <label class="form-label" for="{{ sale_form.payment_method.id_for_label }}">{{ sale_form.payment_method.label }}</label>
+                    {{ sale_form.payment_method }}
+                    {% for error in sale_form.payment_method.errors %}<div class="text-danger small mt-1">{{ error }}</div>{% endfor %}
+                </div>
+                <div class="col-12 d-grid d-md-flex justify-content-md-end">
+                    <button type="submit" class="btn btn-primary">Salvar venda</button>
+                </div>
+            </form>
+        </section>
+
+        <section class="panel-card panel-card--spaced">
+            <div class="panel-card__header">
+                <p class="eyebrow">Estoque</p>
+                <h3>Inicial / Vendido / Reservado / Saldo</h3>
+            </div>
+            <div class="table-responsive">
+                <table class="table team-table align-middle mb-0">
+                    <thead>
+                        <tr>
+                            <th>Cor</th>
+                            <th>Tamanho</th>
+                            <th>Inicial</th>
+                            <th>Vendido</th>
+                            <th>Reservado</th>
+                            <th>Saldo</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for row in inventory_matrix %}
+                            {% for slot in row.sizes %}
+                                <tr>
+                                    <td>{{ row.label }}</td>
+                                    <td>{{ slot.label }}</td>
+                                    <td>{{ slot.initial }}</td>
+                                    <td>{{ slot.sold }}</td>
+                                    <td>{{ slot.reserved }}</td>
+                                    <td><strong>{{ slot.balance }}</strong></td>
+                                </tr>
+                            {% endfor %}
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+        </section>
+
+        <section class="panel-card">
+            <div class="panel-card__header">
+                <p class="eyebrow">Histórico</p>
+                <h3>Vendas recentes</h3>
+            </div>
+            <div class="table-responsive">
+                <table class="table team-table align-middle mb-0">
+                    <thead>
+                        <tr>
+                            <th>Produto</th>
+                            <th>Tamanho</th>
+                            <th>Quantidade</th>
+                            <th>Forma de pagamento</th>
+                            <th>Valor</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for sale in sales %}
+                            <tr>
+                                <td>{{ sale.product_name }}</td>
+                                <td>{{ sale.get_size_display }}</td>
+                                <td>{{ sale.quantity }}</td>
+                                <td>{{ sale.get_payment_method_display }}</td>
+                                <td>R$ {{ sale.total_value }}</td>
+                            </tr>
+                        {% empty %}
+                            <tr><td colspan="5"><p class="empty-state">Nenhuma venda registrada ainda.</p></td></tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+        </section>
+    </div>
+
+    <div class="tab-pane fade {% if active_tab == 'finance' %}show active{% endif %}">
+        <section class="dashboard-grid">
+            <article class="panel-card">
+                <div class="panel-card__header">
+                    <p class="eyebrow">Distribuição de pagamentos</p>
+                    <h3>Gráfico financeiro</h3>
+                </div>
+                <div class="chart-wrap"><canvas id="paymentChart"></canvas></div>
+                {{ payment_chart_labels|json_script:'payment-chart-labels' }}
+                {{ payment_chart_values|json_script:'payment-chart-values' }}
+            </article>
+            <article class="panel-card">
+                <div class="panel-card__header">
+                    <p class="eyebrow">Evolução do estoque</p>
+                    <h3>Movimentação</h3>
+                </div>
+                <div class="chart-wrap"><canvas id="evolutionChart"></canvas></div>
+                {{ evolution_chart_labels|json_script:'evolution-chart-labels' }}
+                {{ evolution_chart_values|json_script:'evolution-chart-values' }}
+            </article>
+        </section>
+
+        <section class="cards-grid mt-3">
+            <article class="summary-card"><div class="summary-card__title">Vendas x pré-encomendas</div><div class="summary-card__value">R$ {{ total_sales|floatformat:2 }}</div><div class="summary-card__meta">Total de vendas</div></article>
+            <article class="summary-card"><div class="summary-card__title">Estimativa das reservas</div><div class="summary-card__value">R$ {{ preorder_estimate|floatformat:2 }}</div><div class="summary-card__meta">Valor reservado</div></article>
+            <article class="summary-card"><div class="summary-card__title">Saldo líquido</div><div class="summary-card__value">R$ {{ total_sales|floatformat:2 }}</div><div class="summary-card__meta">Valor das vendas</div></article>
+        </section>
+    </div>
+
+    <div class="tab-pane fade {% if active_tab == 'stock_add' %}show active{% endif %}">
+        <section class="panel-card">
+            <div class="panel-card__header">
+                <p class="eyebrow">Adição de estoque</p>
+                <h3>Atualizar saldo inicial</h3>
+            </div>
+            <form method="post" class="row g-3">
+                {% csrf_token %}
+                <input type="hidden" name="action" value="inventory_adjust">
+                <div class="col-6 col-md-3">
+                    <label class="form-label" for="{{ inventory_form.color.id_for_label }}">{{ inventory_form.color.label }}</label>
+                    {{ inventory_form.color }}
+                </div>
+                <div class="col-6 col-md-3">
+                    <label class="form-label" for="{{ inventory_form.size.id_for_label }}">{{ inventory_form.size.label }}</label>
+                    {{ inventory_form.size }}
+                </div>
+                <div class="col-12 col-md-3">
+                    <label class="form-label" for="{{ inventory_form.initial_quantity.id_for_label }}">{{ inventory_form.initial_quantity.label }}</label>
+                    {{ inventory_form.initial_quantity }}
+                </div>
+                <div class="col-12 col-md-3 d-grid align-items-end">
+                    <button type="submit" class="btn btn-outline-primary">Salvar estoque</button>
+                </div>
+            </form>
+        </section>
+    </div>
+</div>
+{% endblock %}

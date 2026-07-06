@@ -1,24 +1,47 @@
 import json
+import csv
+import hashlib
+import io
+import uuid
+import unicodedata
 from pathlib import Path
 from urllib import error as urllib_error
 from urllib import request as urllib_request
+from urllib.parse import parse_qs, urlparse
 
 from decimal import Decimal
 
 from django.conf import settings
 from django.contrib import messages
 from django.contrib.auth.decorators import login_required
-from django.http import HttpResponseForbidden
+from django.http import HttpResponseForbidden, JsonResponse
 from django.shortcuts import get_object_or_404, redirect, render
 from django.urls import reverse
+from django.utils import timezone
+from django.db import transaction
 
 from accounts.models import User
-from .forms import MembroForm, MembroQuickForm, PreparoForm, TaskForm
+from .forms import AconselhamentoFiltroForm, AconselhamentoImportarForm, AconselhamentoSalaForm, InventoryAdjustForm, MembroForm, MembroQuickForm, PreOrderForm, PreOrderPaymentForm, PreOrderSearchForm, PreparoForm, SaleForm, SheetImportForm, TaskForm
 from .models import (
     ClassroomStatusChoices,
+    AconselhamentoCampista,
+    AconselhamentoCampistaSexoChoices,
+    AconselhamentoConfig,
+    AconselhamentoHistorico,
+    AconselhamentoSala,
+    AconselhamentoSalaCaracteristicaChoices,
+    InventorySku,
     EquipeChoices,
     Membro,
+    PaymentMethodChoices,
+    PreOrderRecord,
+    PreOrderSheetConfig,
+    PreOrderSourceChoices,
+    PreOrderStatusChoices,
     PreparoRegistro,
+    ProductColorChoices,
+    ProductSizeChoices,
+    SaleRecord,
     StatusTarefaChoices,
     SyncStatusChoices,
     Tarefa,
@@ -66,6 +89,400 @@ GOOGLE_CLASSROOM_SCOPES = [
 
 GOOGLE_CREDENTIALS_SESSION_KEY = 'google_classroom_credentials'
 GOOGLE_OAUTH_STATE_SESSION_KEY = 'google_classroom_oauth_state'
+GOOGLE_SHEETS_CREDENTIALS_FILE = 'GOOGLE_SHEETS_SERVICE_ACCOUNT_FILE'
+GOOGLE_SHEETS_SPREADSHEET_ID = 'GOOGLE_SHEETS_SPREADSHEET_ID'
+GOOGLE_SHEETS_RANGE_NAME = 'GOOGLE_SHEETS_RANGE_NAME'
+DEFAULT_PRODUCT_NAME = 'Camiseta'
+PIX_CASH_VALUE = Decimal('65.00')
+CARD_VALUE = Decimal('70.00')
+
+
+def _commercial_allowed(user):
+    if not user.is_authenticated:
+        return False
+    if user.is_superuser:
+        return True
+    return user.role in {User.Role.ADMINISTRACAO, User.Role.NOBREAK}
+
+
+def _ensure_inventory_grid():
+    for color, _ in ProductColorChoices.choices:
+        for size, _ in ProductSizeChoices.choices:
+            InventorySku.objects.get_or_create(color=color, size=size, defaults={'initial_quantity': 0})
+
+
+def _inventory_matrix():
+    _ensure_inventory_grid()
+    matrix = []
+    for color, color_label in ProductColorChoices.choices:
+        row = {'color': color, 'label': color_label, 'sizes': []}
+        for size, size_label in ProductSizeChoices.choices:
+            sku = InventorySku.objects.get(color=color, size=size)
+            row['sizes'].append({
+                'size': size,
+                'label': size_label,
+                'initial': sku.initial_quantity,
+                'sold': sku.sold_quantity,
+                'reserved': sku.reserved_quantity,
+                'balance': sku.balance_quantity,
+            })
+        matrix.append(row)
+    return matrix
+
+
+def _commercial_totals():
+    total_pix_cash = SaleRecord.objects.filter(payment_method=PaymentMethodChoices.PIX_CASH).aggregate(total=models.Sum('total_value'))['total'] or Decimal('0')
+    total_card = SaleRecord.objects.filter(payment_method=PaymentMethodChoices.CARD).aggregate(total=models.Sum('total_value'))['total'] or Decimal('0')
+    total_sales = SaleRecord.objects.aggregate(total=models.Sum('total_value'))['total'] or Decimal('0')
+    total_preorders = PreOrderRecord.objects.aggregate(total=models.Sum('quantity'))['total'] or 0
+    preorder_estimate = Decimal(total_preorders) * PIX_CASH_VALUE
+    return total_pix_cash, total_card, total_sales, preorder_estimate
+
+
+def _inventory_evolution_series():
+    sales = [
+        {'timestamp': item['created_at'], 'delta': -int(item['quantity'])}
+        for item in SaleRecord.objects.order_by('created_at').values('created_at', 'quantity')
+    ]
+    preorders = [
+        {'timestamp': item['created_at'], 'delta': int(item['quantity'])}
+        for item in PreOrderRecord.objects.order_by('created_at').values('created_at', 'quantity')
+    ]
+    movements = sorted(sales + preorders, key=lambda item: item['timestamp'])
+    points = []
+    balance = 0
+    for movement in movements:
+        balance += movement['delta']
+        points.append({'label': movement['timestamp'].date().isoformat(), 'value': balance})
+    return points[-30:]
+
+
+def _sheet_service():
+    creds_file = str(getattr(settings, GOOGLE_SHEETS_CREDENTIALS_FILE, '')).strip()
+    spreadsheet_id = str(getattr(settings, GOOGLE_SHEETS_SPREADSHEET_ID, '')).strip()
+    if not creds_file or not spreadsheet_id:
+        return None, None
+    try:
+        from google.oauth2.service_account import Credentials as ServiceAccountCredentials
+        from googleapiclient.discovery import build
+    except ImportError:
+        return None, None
+    credentials = ServiceAccountCredentials.from_service_account_file(
+        creds_file,
+        scopes=['https://www.googleapis.com/auth/spreadsheets'],
+    )
+    return build('sheets', 'v4', credentials=credentials), spreadsheet_id
+
+
+def _get_saved_preorder_sheet_link():
+    return (
+        PreOrderSheetConfig.objects.filter(pk=1).values_list('sheet_link', flat=True).first() or ''
+    ).strip()
+
+
+def _save_preorder_sheet_link(sheet_link):
+    sheet_link = str(sheet_link or '').strip()
+    config, _ = PreOrderSheetConfig.objects.get_or_create(pk=1)
+    if config.sheet_link != sheet_link:
+        config.sheet_link = sheet_link
+        config.save(update_fields=['sheet_link', 'updated_at'])
+    return config
+
+
+def _extract_sheet_link_parts(sheet_link):
+    parsed_url = urlparse(str(sheet_link or '').strip())
+    path_parts = [part for part in parsed_url.path.split('/') if part]
+    spreadsheet_id = ''
+    if 'd' in path_parts:
+        try:
+            spreadsheet_id = path_parts[path_parts.index('d') + 1]
+        except IndexError:
+            spreadsheet_id = ''
+    sheet_gid = parse_qs(parsed_url.fragment).get('gid', [''])[0] or parse_qs(parsed_url.query).get('gid', [''])[0]
+    return spreadsheet_id, sheet_gid
+
+
+def _fetch_sheet_rows_via_csv(sheet_link):
+    spreadsheet_id, sheet_gid = _extract_sheet_link_parts(sheet_link)
+    if not spreadsheet_id:
+        return []
+    csv_urls = []
+    if sheet_gid:
+        csv_urls.append(f'https://docs.google.com/spreadsheets/d/{spreadsheet_id}/export?format=csv&gid={sheet_gid}')
+        csv_urls.append(f'https://docs.google.com/spreadsheets/d/{spreadsheet_id}/gviz/tq?tqx=out:csv&gid={sheet_gid}')
+    csv_urls.append(f'https://docs.google.com/spreadsheets/d/{spreadsheet_id}/export?format=csv')
+    csv_urls.append(f'https://docs.google.com/spreadsheets/d/{spreadsheet_id}/gviz/tq?tqx=out:csv')
+
+    last_error = None
+    for url in csv_urls:
+        try:
+            with urllib_request.urlopen(url, timeout=20) as response:
+                content = response.read().decode('utf-8-sig')
+            reader = csv.reader(io.StringIO(content))
+            return [row for row in reader if any(str(cell).strip() for cell in row)]
+        except Exception as exc:
+            last_error = exc
+    return []
+
+
+def _append_preorder_to_sheet(preorder):
+    service, spreadsheet_id = _sheet_service()
+    if not service or not spreadsheet_id:
+        return False, 'Planilha Google nao configurada.'
+    range_name = str(getattr(settings, GOOGLE_SHEETS_RANGE_NAME, 'Preorders!A:G')).strip() or 'Preorders!A:G'
+    values = [[
+        preorder.external_key,
+        preorder.volunteer_name,
+        preorder.color,
+        preorder.size,
+        preorder.quantity,
+        preorder.created_at.isoformat(),
+        preorder.status,
+    ]]
+    try:
+        service.spreadsheets().values().append(
+            spreadsheetId=spreadsheet_id,
+            range=range_name,
+            valueInputOption='USER_ENTERED',
+            insertDataOption='INSERT_ROWS',
+            body={'values': values},
+        ).execute()
+        return True, 'ok'
+    except Exception as exc:
+        return False, str(exc)
+
+
+def _read_preorders_from_sheet(sheet_tab=''):
+    rows = _fetch_sheet_rows_via_csv(sheet_tab)
+    if not rows:
+        service, default_spreadsheet_id = _sheet_service()
+        if not service or not default_spreadsheet_id:
+            return []
+
+        spreadsheet_id = default_spreadsheet_id
+        sheet_name = ''
+        if sheet_tab:
+            spreadsheet_id, sheet_gid = _extract_sheet_link_parts(sheet_tab)
+            if not spreadsheet_id:
+                spreadsheet_id = default_spreadsheet_id
+            try:
+                metadata = service.spreadsheets().get(spreadsheetId=spreadsheet_id).execute()
+                sheets = metadata.get('sheets', [])
+                if sheet_gid:
+                    for sheet in sheets:
+                        if str(sheet.get('properties', {}).get('sheetId')) == sheet_gid:
+                            sheet_name = sheet.get('properties', {}).get('title', '')
+                            break
+                if not sheet_name and sheets:
+                    sheet_name = sheets[0].get('properties', {}).get('title', '')
+            except Exception:
+                sheet_name = ''
+
+        base_range = f'{sheet_name}!A:G' if sheet_name else str(getattr(settings, GOOGLE_SHEETS_RANGE_NAME, 'Preorders!A:G')).strip() or 'Preorders!A:G'
+        try:
+            result = service.spreadsheets().values().get(spreadsheetId=spreadsheet_id, range=base_range).execute()
+            rows = result.get('values', [])
+        except Exception:
+            return []
+
+    def normalize_header(value):
+        normalized = unicodedata.normalize('NFKD', str(value or '').strip()).encode('ascii', 'ignore').decode('ascii')
+        return normalized.lower().replace(' ', '_').replace('-', '_')
+
+    def pick_value(mapping, row, *candidates, default=''):
+        for candidate in candidates:
+            if candidate in mapping:
+                idx = mapping[candidate]
+                if idx < len(row) and row[idx] not in (None, ''):
+                    return row[idx]
+        return default
+
+    def normalize_choice(value, choices):
+        text = str(value or '').strip().lower()
+        for choice_value, choice_label in choices:
+            if text == str(choice_value).strip().lower() or text == str(choice_label).strip().lower():
+                return choice_value
+        return text
+
+    header_map = {normalize_header(value): index for index, value in enumerate(rows[0])}
+    imported_rows = []
+    for index, row in enumerate(rows[1:], start=2):
+        name_value = pick_value(header_map, row, 'nome', 'voluntario', 'voluntario_nome', 'nome_completo', 'volunteer_name', default=row[0] if row else '')
+        color_value = pick_value(header_map, row, 'cor', 'color', default=row[1] if len(row) > 1 else '')
+        size_value = pick_value(header_map, row, 'tamanho', 'size', default=row[2] if len(row) > 2 else '')
+        quantity_value = pick_value(header_map, row, 'quantidade', 'qtd', 'quantity', default=row[3] if len(row) > 3 else '1')
+        external_key = pick_value(header_map, row, 'id', 'chave', 'external_key', 'codigo', 'código', default='')
+        if not name_value or not color_value or not size_value:
+            continue
+        if not external_key:
+            raw_signature = f'{name_value}|{color_value}|{size_value}|{quantity_value}'
+            external_key = hashlib.sha1(raw_signature.encode('utf-8')).hexdigest()
+        try:
+            quantity_value = int(quantity_value or 1)
+        except (TypeError, ValueError):
+            quantity_value = 1
+        imported_rows.append({
+            'external_key': external_key,
+            'volunteer_name': name_value,
+            'color': normalize_choice(color_value, ProductColorChoices.choices),
+            'size': normalize_choice(size_value, ProductSizeChoices.choices),
+            'quantity': quantity_value,
+            'sheet_row_number': index,
+            'raw': row,
+        })
+    return imported_rows
+
+
+def _sync_preorders_from_sheet(sheet_link, created_by=None):
+    sheet_link = str(sheet_link or '').strip()
+    if not sheet_link:
+        sheet_link = _get_saved_preorder_sheet_link()
+    if not sheet_link:
+        return 0
+
+    imported_rows = _read_preorders_from_sheet(sheet_link)
+    created_count = 0
+    with transaction.atomic():
+        for row in imported_rows:
+            if PreOrderRecord.objects.filter(external_key=row['external_key']).exists():
+                continue
+            ok, _sku = _reserve_inventory(row['color'], row['size'], row['quantity'])
+            if not ok:
+                continue
+            PreOrderRecord.objects.create(
+                external_key=row['external_key'],
+                source=PreOrderSourceChoices.SHEET,
+                volunteer_name=row['volunteer_name'],
+                color=row['color'],
+                size=row['size'],
+                quantity=row['quantity'],
+                payment_status=PreOrderPaymentStatusChoices.PENDENTE,
+                payment_method='',
+                status=PreOrderStatusChoices.IMPORTADO,
+                sheet_row_number=row['sheet_row_number'],
+                sheet_payload=row['raw'],
+                created_by=created_by,
+                imported_at=timezone.now(),
+            )
+            created_count += 1
+    return created_count
+
+
+def _get_saved_aconselhamento_sheet_link():
+    return (AconselhamentoConfig.objects.filter(pk=1).values_list('sheet_link', flat=True).first() or '').strip()
+
+
+def _save_aconselhamento_sheet_link(sheet_link):
+    sheet_link = str(sheet_link or '').strip()
+    config, _ = AconselhamentoConfig.objects.get_or_create(pk=1)
+    if config.sheet_link != sheet_link:
+        config.sheet_link = sheet_link
+        config.save(update_fields=['sheet_link', 'updated_at'])
+    return config
+
+
+def _sync_campistas_da_planilha(sheet_link, criado_por=None):
+    sheet_link = str(sheet_link or '').strip() or _get_saved_aconselhamento_sheet_link()
+    if not sheet_link:
+        return 0
+
+    linhas = _fetch_sheet_rows_via_csv(sheet_link)
+    if len(linhas) < 2:
+        return 0
+
+    def normalizar_cabecalho(valor):
+        texto = unicodedata.normalize('NFKD', str(valor or '').strip()).encode('ascii', 'ignore').decode('ascii')
+        return texto.lower().replace(' ', '_').replace('-', '_')
+
+    def escolher_valor(mapa, linha, *candidatos, padrao=''):
+        for candidato in candidatos:
+            if candidato in mapa:
+                indice = mapa[candidato]
+                if indice < len(linha) and linha[indice] not in (None, ''):
+                    return linha[indice]
+        return padrao
+
+    def normalizar_escolha(valor, escolhas):
+        texto = str(valor or '').strip().lower()
+        for valor_escolha, rotulo in escolhas:
+            if texto == str(valor_escolha).strip().lower() or texto == str(rotulo).strip().lower():
+                return valor_escolha
+        return ''
+
+    cabecalho = {normalizar_cabecalho(valor): indice for indice, valor in enumerate(linhas[0])}
+    spreadsheet_id, sheet_gid = _extract_sheet_link_parts(sheet_link)
+    origem_planilha = f'{spreadsheet_id}:{sheet_gid or "principal"}'
+
+    total = 0
+    for numero_linha, linha in enumerate(linhas[1:], start=2):
+        nome = escolher_valor(cabecalho, linha, 'nome', 'acampante', 'nome_completo', 'participante', padrao=linha[0] if linha else '')
+        if not nome:
+            continue
+        idade_bruta = escolher_valor(cabecalho, linha, 'idade', 'anos', padrao='')
+        sexo = normalizar_escolha(escolher_valor(cabecalho, linha, 'sexo', 'genero', 'gênero', padrao=''), AconselhamentoCampistaSexoChoices.choices)
+        celula = escolher_valor(cabecalho, linha, 'celula', 'célula', 'turma', 'equipe', padrao='')
+        observacoes = escolher_valor(cabecalho, linha, 'observacoes', 'observação', 'observacao', 'obs', padrao='')
+        try:
+            idade = int(idade_bruta) if str(idade_bruta).strip() else None
+        except (TypeError, ValueError):
+            idade = None
+
+        AconselhamentoCampista.objects.update_or_create(
+            origem_planilha=origem_planilha,
+            linha_planilha=numero_linha,
+            defaults={
+                'nome': nome,
+                'idade': idade,
+                'sexo': sexo,
+                'celula': celula,
+                'observacoes': observacoes,
+                'criado_por': criado_por,
+            },
+        )
+        total += 1
+
+    return total
+
+
+def _validar_campista_para_sala(campista, sala_destino):
+    if not sala_destino:
+        return True, ''
+    if sala_destino.vagas_livres <= 0 and campista.sala_id != sala_destino.id:
+        return False, 'O quarto está cheio.'
+    if campista.sexo and campista.sexo != sala_destino.caracteristica:
+        return False, 'O sexo do acampante não bate com as características do quarto.'
+    return True, ''
+
+
+def _registrar_movimento_campista(campista, sala_origem, sala_destino, acao, detalhe='', criado_por=None):
+    AconselhamentoHistorico.objects.create(
+        campista=campista,
+        sala_origem=sala_origem,
+        sala_destino=sala_destino,
+        acao=acao,
+        detalhe=detalhe,
+        criado_por=criado_por,
+    )
+
+
+def _reserve_inventory(color, size, quantity):
+    _ensure_inventory_grid()
+    sku = InventorySku.objects.select_for_update().get(color=color, size=size)
+    if sku.balance_quantity < quantity:
+        return False, sku
+    sku.reserved_quantity += quantity
+    sku.save(update_fields=['reserved_quantity', 'updated_at'])
+    return True, sku
+
+
+def _sell_inventory(color, size, quantity):
+    _ensure_inventory_grid()
+    sku = InventorySku.objects.select_for_update().get(color=color, size=size)
+    if sku.balance_quantity < quantity:
+        return False, sku
+    sku.sold_quantity += quantity
+    sku.save(update_fields=['sold_quantity', 'updated_at'])
+    return True, sku
 
 
 def _team_label(team_slug):
@@ -568,6 +985,73 @@ def team_page(request, team_slug):
     membros = Membro.objects.filter(equipe=team_slug, ativo=True)
     member_form = MembroQuickForm(initial={'ativo': True})
 
+    if team_slug == 'aconselhamento':
+        import_form = AconselhamentoImportarForm(request.POST or None, initial={'sheet_link': _get_saved_aconselhamento_sheet_link()})
+        sala_form = AconselhamentoSalaForm()
+        filtro_form = AconselhamentoFiltroForm(request.GET or None)
+        saved_sheet_link = _get_saved_aconselhamento_sheet_link()
+        if request.method == 'POST' and request.POST.get('acao') == 'importar_planilha' and import_form.is_valid():
+            if import_form.cleaned_data.get('sheet_link'):
+                _save_aconselhamento_sheet_link(import_form.cleaned_data['sheet_link'])
+            _sync_campistas_da_planilha(import_form.cleaned_data.get('sheet_link'), criado_por=request.user)
+            return redirect(reverse('aconselhamento'))
+
+        if request.method == 'GET' and saved_sheet_link:
+            _sync_campistas_da_planilha(saved_sheet_link, criado_por=request.user)
+
+        campistas_base = AconselhamentoCampista.objects.select_related('sala').order_by('sala__nome', 'nome')
+        campistas_disponiveis = campistas_base.filter(sala__isnull=True)
+        if filtro_form.is_valid():
+            nome = filtro_form.cleaned_data.get('nome', '').strip()
+            sexo = filtro_form.cleaned_data.get('sexo')
+            celula = filtro_form.cleaned_data.get('celula', '').strip()
+            idade_min = filtro_form.cleaned_data.get('idade_min')
+            idade_max = filtro_form.cleaned_data.get('idade_max')
+            
+            if nome:
+                campistas_disponiveis = campistas_disponiveis.filter(nome__icontains=nome)
+            if sexo:
+                campistas_disponiveis = campistas_disponiveis.filter(sexo=sexo)
+            if celula:
+                campistas_disponiveis = campistas_disponiveis.filter(celula__icontains=celula)
+            if idade_min is not None:
+                campistas_disponiveis = campistas_disponiveis.filter(idade__gte=idade_min)
+            if idade_max is not None:
+                campistas_disponiveis = campistas_disponiveis.filter(idade__lte=idade_max)
+
+        salas = list(AconselhamentoSala.objects.prefetch_related('campistas').order_by('nome'))
+        historicos = AconselhamentoHistorico.objects.select_related('campista', 'sala_origem', 'sala_destino', 'criado_por')[:50]
+        total_campistas = campistas_base.count()
+        campistas_nao_alocados = campistas_base.filter(sala__isnull=True).count()
+        salas_cheias = sum(1 for sala in salas if sala.ocupacao_total >= sala.capacidade)
+        vagas_livres = sum(sala.vagas_livres for sala in salas)
+        return render(request, 'dashboard/aconselhamento.html', {
+            'page_title': meta['title'],
+            'active_page': team_slug,
+            'team_slug': team_slug,
+            'team_title': meta['title'],
+            'team_subtitle': meta['subtitle'],
+            'filtro_form': filtro_form,
+            'import_form': import_form,
+            'sala_form': sala_form,
+            'salas': salas,
+            'campistas_disponiveis': campistas_disponiveis,
+            'campistas_base': campistas_base,
+            'historicos': historicos,
+            'total_campistas': total_campistas,
+            'campistas_nao_alocados': campistas_nao_alocados,
+            'salas_cheias': salas_cheias,
+            'vagas_livres': vagas_livres,
+            'can_view_members_index': _can_view_members_index(request.user),
+            'can_manage_membership': _can_manage_membership(request.user),
+            'member_form': member_form,
+            'member_create_url': reverse('team_member_create', kwargs={'team_slug': team_slug}),
+            'members_index_url': reverse('membros'),
+            'campista_move_url': reverse('aconselhamento_campista_mover'),
+            'sala_create_url': reverse('aconselhamento_sala_criar'),
+            'import_url': reverse('aconselhamento_importar_planilha'),
+        })
+
     template_name = 'dashboard/eventos.html' if team_slug == 'eventos' else 'dashboard/team_page.html'
     return render(request, template_name, {
         'page_title': meta['title'],
@@ -590,6 +1074,99 @@ def team_page(request, team_slug):
         'task_pending': tarefas.filter(status=StatusTarefaChoices.PENDENTE).count(),
         'task_done': tarefas.filter(status=StatusTarefaChoices.CONCLUIDA).count(),
     })
+
+
+@login_required
+def aconselhamento_importar_planilha(request):
+    if not _can_access_team(request.user, 'aconselhamento'):
+        return _deny_access('aconselhamento')
+    if request.method != 'POST':
+        return HttpResponseForbidden('Requisição inválida.')
+
+    form = AconselhamentoImportarForm(request.POST)
+    if form.is_valid():
+        sheet_link = form.cleaned_data.get('sheet_link') or ''
+        if sheet_link:
+            _save_aconselhamento_sheet_link(sheet_link)
+        total = _sync_campistas_da_planilha(sheet_link, criado_por=request.user)
+        messages.success(request, f'{total} campistas sincronizados da planilha.')
+    else:
+        messages.error(request, 'Informe um link válido da planilha.')
+    return redirect(reverse('aconselhamento'))
+
+
+@login_required
+def aconselhamento_sala_criar(request):
+    if not _can_access_team(request.user, 'aconselhamento'):
+        return _deny_access('aconselhamento')
+    if request.method != 'POST':
+        return HttpResponseForbidden('Requisição inválida.')
+
+    form = AconselhamentoSalaForm(request.POST)
+    if form.is_valid():
+        AconselhamentoSala.objects.create(
+            nome=form.cleaned_data['nome'],
+            capacidade=form.cleaned_data['capacidade'],
+            caracteristica=form.cleaned_data['caracteristica'],
+            observacoes=form.cleaned_data['observacoes'],
+        )
+        messages.success(request, 'Sala criada com sucesso.')
+    else:
+        messages.error(request, 'Confira os dados da sala.')
+    return redirect(reverse('aconselhamento'))
+
+
+@login_required
+def aconselhamento_sala_editar(request, sala_id):
+    if not _can_access_team(request.user, 'aconselhamento'):
+        return _deny_access('aconselhamento')
+    
+    sala = get_object_or_404(AconselhamentoSala, pk=sala_id)
+    
+    if request.method == 'POST':
+        form = AconselhamentoSalaForm(request.POST)
+        if form.is_valid():
+            sala.nome = form.cleaned_data['nome']
+            sala.capacidade = form.cleaned_data['capacidade']
+            sala.caracteristica = form.cleaned_data['caracteristica']
+            sala.observacoes = form.cleaned_data['observacoes']
+            sala.save()
+            messages.success(request, 'Quarto atualizado com sucesso.')
+            return redirect(reverse('aconselhamento'))
+        else:
+            messages.error(request, 'Confira os dados do quarto.')
+            return redirect(reverse('aconselhamento'))
+    
+    return JsonResponse({'ok': False, 'mensagem': 'Requisição inválida.'}, status=405)
+
+
+@login_required
+def aconselhamento_campista_mover(request):
+    if not _can_access_team(request.user, 'aconselhamento'):
+        return _deny_access('aconselhamento')
+    if request.method != 'POST':
+        return JsonResponse({'ok': False, 'mensagem': 'Requisição inválida.'}, status=405)
+
+    campista_id = request.POST.get('campista_id')
+    sala_id = request.POST.get('sala_id')
+    campista = get_object_or_404(AconselhamentoCampista.objects.select_related('sala'), pk=campista_id)
+    sala_destino = AconselhamentoSala.objects.filter(pk=sala_id).first() if sala_id else None
+    sala_origem = campista.sala
+
+    ok, mensagem = _validar_campista_para_sala(campista, sala_destino)
+    if not ok:
+        return JsonResponse({'ok': False, 'mensagem': mensagem}, status=400)
+
+    if sala_origem_id := getattr(sala_origem, 'id', None):
+        if sala_destino and sala_origem_id == sala_destino.id:
+            return JsonResponse({'ok': True, 'mensagem': 'Acampante já está neste quarto.'})
+
+    campista.sala = sala_destino
+    campista.save(update_fields=['sala', 'atualizado_em'])
+    acao = 'movido_para_sala' if sala_destino else 'removido_da_sala'
+    detalhe = f'{campista.nome} foi movido para {sala_destino.nome if sala_destino else "sem quarto"}.'
+    _registrar_movimento_campista(campista, sala_origem, sala_destino, acao, detalhe, criado_por=request.user)
+    return JsonResponse({'ok': True, 'mensagem': 'Acampante movido com sucesso.'})
 
 
 @login_required
@@ -743,3 +1320,193 @@ def preparo_google_disconnect(request):
     request.session.pop(GOOGLE_OAUTH_STATE_SESSION_KEY, None)
     messages.info(request, 'Conexao com Google Classroom removida desta sessao.')
     return redirect('preparo')
+
+
+@login_required
+def commerce_dashboard(request):
+    if not _commercial_allowed(request.user):
+        return HttpResponseForbidden('Voce nao tem permissao para acessar o modulo comercial.')
+
+    _ensure_inventory_grid()
+    active_tab = request.GET.get('tab', 'inventory')
+    sale_form = SaleForm(request.POST or None)
+    inventory_form = InventoryAdjustForm(request.POST or None)
+    if request.method == 'POST' and request.POST.get('action') == 'inventory_adjust' and inventory_form.is_valid():
+        with transaction.atomic():
+            sku, _ = InventorySku.objects.select_for_update().get_or_create(
+                color=inventory_form.cleaned_data['color'],
+                size=inventory_form.cleaned_data['size'],
+                defaults={'initial_quantity': 0},
+            )
+            sku.initial_quantity = inventory_form.cleaned_data['initial_quantity']
+            sku.save(update_fields=['initial_quantity', 'updated_at'])
+        messages.success(request, 'Estoque inicial atualizado.')
+        return redirect(f"{reverse('commerce_dashboard')}?tab=inventory")
+
+    if request.method == 'POST' and request.POST.get('action') == 'sale' and sale_form.is_valid():
+        unit_value = PIX_CASH_VALUE if sale_form.cleaned_data['payment_method'] == PaymentMethodChoices.PIX_CASH else CARD_VALUE
+        total_value = unit_value * sale_form.cleaned_data['quantity']
+        with transaction.atomic():
+            ok, sku = _sell_inventory(
+                sale_form.cleaned_data['color'],
+                sale_form.cleaned_data['size'],
+                sale_form.cleaned_data['quantity'],
+            )
+            if not ok:
+                sale_form.add_error('quantity', 'Saldo insuficiente para esta cor e tamanho.')
+            else:
+                SaleRecord.objects.create(
+                    product_name=sale_form.cleaned_data['product_name'],
+                    color=sale_form.cleaned_data['color'],
+                    size=sale_form.cleaned_data['size'],
+                    quantity=sale_form.cleaned_data['quantity'],
+                    payment_method=sale_form.cleaned_data['payment_method'],
+                    unit_value=unit_value,
+                    total_value=total_value,
+                    created_by=request.user,
+                )
+                messages.success(request, 'Venda registrada e estoque atualizado.')
+                return redirect(f"{reverse('commerce_dashboard')}?tab={active_tab}")
+
+    sales = SaleRecord.objects.order_by('-created_at')[:30]
+    inventory_matrix = _inventory_matrix()
+    total_pix_cash, total_card, total_sales, preorder_estimate = _commercial_totals()
+    payment_chart_labels = ['Pix/Dinheiro', 'Cartão']
+    payment_chart_values = [float(total_pix_cash), float(total_card)]
+    inventory_chart_labels = [f"{row['label']} / {slot['label']}" for row in inventory_matrix for slot in row['sizes']]
+    inventory_chart_values = [slot['balance'] for row in inventory_matrix for slot in row['sizes']]
+    evolution_series = _inventory_evolution_series()
+
+    return render(request, 'dashboard/commerce_dashboard.html', {
+        'page_title': 'Vendas',
+        'active_page': 'commerce',
+        'active_tab': active_tab,
+        'sale_form': sale_form,
+        'inventory_form': inventory_form,
+        'sales': sales,
+        'inventory_matrix': inventory_matrix,
+        'total_pix_cash': total_pix_cash,
+        'total_card': total_card,
+        'total_sales': total_sales,
+        'preorder_estimate': preorder_estimate,
+        'payment_chart_labels': payment_chart_labels,
+        'payment_chart_values': payment_chart_values,
+        'inventory_chart_labels': inventory_chart_labels,
+        'inventory_chart_values': inventory_chart_values,
+        'evolution_chart_labels': [item['label'] for item in evolution_series],
+        'evolution_chart_values': [item['value'] for item in evolution_series],
+    })
+
+
+@login_required
+def preorder_dashboard(request):
+    if not _commercial_allowed(request.user):
+        return HttpResponseForbidden('Voce nao tem permissao para acessar o modulo de pre-encomendas.')
+
+    _ensure_inventory_grid()
+    active_tab = request.GET.get('tab', 'form')
+    preorder_form = PreOrderForm(request.POST or None)
+    saved_sheet_link = _get_saved_preorder_sheet_link()
+    import_form = SheetImportForm(request.POST or None, initial={'sheet_link': saved_sheet_link})
+    payment_form = PreOrderPaymentForm(request.POST or None)
+    search_form = PreOrderSearchForm(request.GET or None)
+
+    if request.method == 'POST' and request.POST.get('action') == 'preorder' and preorder_form.is_valid():
+        external_key = str(uuid.uuid4())
+        with transaction.atomic():
+            ok, sku = _reserve_inventory(
+                preorder_form.cleaned_data['color'],
+                preorder_form.cleaned_data['size'],
+                preorder_form.cleaned_data['quantity'],
+            )
+            if not ok:
+                preorder_form.add_error('quantity', 'Saldo insuficiente para reservar esta cor e tamanho.')
+            else:
+                preorder = PreOrderRecord.objects.create(
+                    external_key=external_key,
+                    source=PreOrderSourceChoices.FORM,
+                    volunteer_name=preorder_form.cleaned_data['volunteer_name'],
+                    color=preorder_form.cleaned_data['color'],
+                    size=preorder_form.cleaned_data['size'],
+                    quantity=preorder_form.cleaned_data['quantity'],
+                    payment_status=PreOrderPaymentStatusChoices.PENDENTE,
+                    payment_method='',
+                    status=PreOrderStatusChoices.RESERVADO,
+                    created_by=request.user,
+                )
+                sheet_ok, sheet_response = _append_preorder_to_sheet(preorder)
+                if sheet_ok:
+                    preorder.status = PreOrderStatusChoices.SINCRONIZADO
+                preorder.sheet_payload = {'sheet_response': sheet_response}
+                preorder.save(update_fields=['status', 'sheet_payload'])
+                messages.success(request, 'Pré-encomenda salva e reserva aplicada.')
+                return redirect(f"{reverse('preorder_dashboard')}?tab=reservations")
+
+    if request.method == 'POST' and request.POST.get('action') == 'import_sheet':
+        sheet_link = (import_form.data.get('sheet_link') or '').strip()
+        if sheet_link:
+            _save_preorder_sheet_link(sheet_link)
+        created_count = _sync_preorders_from_sheet(sheet_link, created_by=request.user)
+        if created_count:
+            messages.success(request, f'{created_count} pré-encomendas importadas da planilha.')
+        else:
+            messages.error(request, 'Não consegui importar nenhuma linha. Verifique se a planilha está compartilhada com a conta de serviço e se a primeira aba tem os cabeçalhos corretos.')
+        return redirect(f"{reverse('preorder_dashboard')}?tab=imports")
+
+    if request.method == 'POST' and request.POST.get('action') == 'update_payment' and payment_form.is_valid():
+        preorder = get_object_or_404(PreOrderRecord, pk=payment_form.cleaned_data['preorder_id'])
+        preorder.payment_status = payment_form.cleaned_data['payment_status']
+        payment_method = (payment_form.cleaned_data.get('payment_method') or '').strip()
+        if preorder.payment_status == PreOrderPaymentStatusChoices.PAGO and not payment_method:
+            payment_form.add_error('payment_method', 'Escolha a forma de pagamento para marcar como pago.')
+        else:
+            preorder.payment_method = payment_method if preorder.payment_status == PreOrderPaymentStatusChoices.PAGO else ''
+            preorder.save(update_fields=['payment_status', 'payment_method'])
+            messages.success(request, 'Forma de pagamento atualizada.')
+            return redirect(f"{reverse('preorder_dashboard')}?tab=edit")
+
+    auto_imported_count = 0
+    if request.method == 'GET' and saved_sheet_link:
+        auto_imported_count = _sync_preorders_from_sheet(saved_sheet_link)
+        if auto_imported_count:
+            messages.info(request, f'{auto_imported_count} novas pré-encomendas foram sincronizadas automaticamente.')
+
+    preorder_qs = PreOrderRecord.objects.order_by('-created_at')
+    preorders = preorder_qs[:50]
+    edit_preorders = preorder_qs
+    search_query = ''
+    if search_form.is_valid():
+        search_query = search_form.cleaned_data.get('q', '').strip()
+        if search_query:
+            edit_preorders = preorder_qs.filter(volunteer_name__icontains=search_query)
+    inventory_matrix = _inventory_matrix()
+    total_pix_cash, total_card, total_sales, preorder_estimate = _commercial_totals()
+    evolution_series = _inventory_evolution_series()
+    return render(request, 'dashboard/preorder_dashboard.html', {
+        'page_title': 'Pré-encomendas',
+        'active_page': 'preorder',
+        'active_tab': active_tab,
+        'preorder_form': preorder_form,
+        'import_form': import_form,
+        'payment_form': payment_form,
+        'search_form': search_form,
+        'edit_preorders': edit_preorders,
+        'search_query': search_query,
+        'saved_sheet_link': saved_sheet_link,
+        'auto_imported_count': auto_imported_count,
+        'preorders': preorders,
+        'inventory_matrix': inventory_matrix,
+        'total_preorders': PreOrderRecord.objects.count(),
+        'reserved_total': PreOrderRecord.objects.aggregate(total=models.Sum('quantity'))['total'] or 0,
+        'balance_total': sum(slot['balance'] for row in inventory_matrix for slot in row['sizes']),
+        'total_pix_cash': total_pix_cash,
+        'total_card': total_card,
+        'total_sales': total_sales,
+        'preorder_estimate': preorder_estimate,
+        'payment_chart_labels': ['Vendas', 'Pré-encomendas'],
+        'payment_chart_values': [float(total_sales), float(preorder_estimate)],
+        'inventory_chart_labels': [f"{row['label']} / {slot['label']}" for row in inventory_matrix for slot in row['sizes']],
+        'inventory_chart_values': [slot['balance'] for row in inventory_matrix for slot in row['sizes']],
+        'evolution_chart_labels': [item['label'] for item in evolution_series],
+        'evolution_chart_values': [item['value'] for item in evolution_series],
+    })

@@ -3,9 +3,15 @@ from pathlib import Path
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 
-SECRET_KEY = 'django-insecure-change-this-key-in-development'
-DEBUG = True
-ALLOWED_HOSTS = []
+
+def _split_env_list(var_name, default=''):
+    raw_value = os.getenv(var_name, default)
+    return [item.strip() for item in raw_value.split(',') if item.strip()]
+
+SECRET_KEY = os.getenv('DJANGO_SECRET_KEY', 'django-insecure-change-this-key-in-development')
+DEBUG = os.getenv('DJANGO_DEBUG', 'false').lower() == 'true'
+ALLOWED_HOSTS = _split_env_list('DJANGO_ALLOWED_HOSTS', '127.0.0.1,localhost')
+CSRF_TRUSTED_ORIGINS = _split_env_list('DJANGO_CSRF_TRUSTED_ORIGINS')
 
 INSTALLED_APPS = [
     'django.contrib.admin',
@@ -69,9 +75,14 @@ TIME_ZONE = 'America/Sao_Paulo'
 USE_I18N = True
 USE_TZ = True
 
-STATIC_URL = 'static/'
+STATIC_URL = '/static/'
 STATICFILES_DIRS = [BASE_DIR / 'static'] if (BASE_DIR / 'static').exists() else []
 STATIC_ROOT = BASE_DIR / 'staticfiles'
+
+if not DEBUG:
+    SESSION_COOKIE_SECURE = True
+    CSRF_COOKIE_SECURE = True
+    SECURE_PROXY_SSL_HEADER = ('HTTP_X_FORWARDED_PROTO', 'https')
 
 DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 AUTH_USER_MODEL = 'accounts.User'
@@ -82,3 +93,6 @@ LOGOUT_REDIRECT_URL = '/accounts/login/'
 FORMSPREE_PREPARO_ENDPOINT = os.getenv('FORMSPREE_PREPARO_ENDPOINT', '')
 GOOGLE_CLASSROOM_CLIENT_SECRETS_FILE = os.getenv('GOOGLE_CLASSROOM_CLIENT_SECRETS_FILE', '')
 FEATURE_PREPARO_ENABLED = os.getenv('FEATURE_PREPARO_ENABLED', 'false').lower() == 'true'
+GOOGLE_SHEETS_SERVICE_ACCOUNT_FILE = os.getenv('GOOGLE_SHEETS_SERVICE_ACCOUNT_FILE', '')
+GOOGLE_SHEETS_SPREADSHEET_ID = os.getenv('GOOGLE_SHEETS_SPREADSHEET_ID', '')
+GOOGLE_SHEETS_RANGE_NAME = os.getenv('GOOGLE_SHEETS_RANGE_NAME', 'Preorders!A:G')

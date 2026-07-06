@@ -4,10 +4,16 @@ from . import views
 
 urlpatterns = [
     path('', views.index, name='dashboard'),
+    path('vendas/', views.commerce_dashboard, name='commerce_dashboard'),
+    path('pre-encomendas/', views.preorder_dashboard, name='preorder_dashboard'),
     path('preparo/', views.preparo_page, name='preparo'),
     path('preparo/google/conectar/', views.preparo_google_connect, name='preparo_google_connect'),
     path('preparo/google/callback/', views.preparo_google_callback, name='preparo_google_callback'),
     path('preparo/google/desconectar/', views.preparo_google_disconnect, name='preparo_google_disconnect'),
+    path('aconselhamento/importar-planilha/', views.aconselhamento_importar_planilha, name='aconselhamento_importar_planilha'),
+    path('aconselhamento/salas/criar/', views.aconselhamento_sala_criar, name='aconselhamento_sala_criar'),
+    path('aconselhamento/salas/<int:sala_id>/editar/', views.aconselhamento_sala_editar, name='aconselhamento_sala_editar'),
+    path('aconselhamento/campistas/mover/', views.aconselhamento_campista_mover, name='aconselhamento_campista_mover'),
     path('membros/', views.member_list, name='membros'),
     path('membros/novo/', views.member_create, name='membro_create'),
     path('membros/<int:pk>/editar/', views.member_update, name='membro_update'),

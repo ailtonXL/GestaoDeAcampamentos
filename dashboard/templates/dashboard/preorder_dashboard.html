@@ -1,0 +1,290 @@
+{% extends 'dashboard/base.html' %}
+
+{% block content %}
+<section class="hero-card hero-card--compact">
+    <div>
+        <p class="eyebrow">Pré-encomendas de nomes</p>
+        <h2>Pré-encomendas</h2>
+        <p class="hero-card__text">Capture nomes, reserve estoque automaticamente e importe planilhas do Google Planilhas para a aba interna.</p>
+    </div>
+    <div class="hero-card__stats">
+        <div><strong>{{ total_preorders }}</strong><span>Total de pré-encomendas</span></div>
+        <div><strong>{{ reserved_total }}</strong><span>Unidades reservadas</span></div>
+        <div><strong>{{ balance_total }}</strong><span>Saldo líquido</span></div>
+    </div>
+</section>
+
+{% if messages %}
+    {% for message in messages %}
+        <div class="alert alert-{{ message.tags|default:'info' }}">{{ message }}</div>
+    {% endfor %}
+{% endif %}
+
+<ul class="nav nav-tabs mb-3">
+    <li class="nav-item"><a class="nav-link {% if active_tab == 'form' %}active{% endif %}" href="?tab=form">Formulário</a></li>
+    <li class="nav-item"><a class="nav-link {% if active_tab == 'imports' %}active{% endif %}" href="?tab=imports">Importações</a></li>
+    <li class="nav-item"><a class="nav-link {% if active_tab == 'edit' %}active{% endif %}" href="?tab=edit">Pagamento</a></li>
+    <li class="nav-item"><a class="nav-link {% if active_tab == 'stock' %}active{% endif %}" href="?tab=stock">Estoque</a></li>
+</ul>
+
+<div class="tab-content">
+    <div class="tab-pane fade {% if active_tab == 'form' %}show active{% endif %}">
+        <section class="panel-card panel-card--spaced">
+            <div class="panel-card__header">
+                <p class="eyebrow">Formulário do nome</p>
+                <h3>Reservar estoque</h3>
+            </div>
+            <form method="post" class="row g-3">
+                {% csrf_token %}
+                <input type="hidden" name="action" value="preorder">
+                <div class="col-12 col-md-5">
+                    <label class="form-label" for="{{ preorder_form.volunteer_name.id_for_label }}">{{ preorder_form.volunteer_name.label }}</label>
+                    {{ preorder_form.volunteer_name }}
+                    {% for error in preorder_form.volunteer_name.errors %}<div class="text-danger small mt-1">{{ error }}</div>{% endfor %}
+                </div>
+                <div class="col-6 col-md-2">
+                    <label class="form-label" for="{{ preorder_form.color.id_for_label }}">{{ preorder_form.color.label }}</label>
+                    {{ preorder_form.color }}
+                    {% for error in preorder_form.color.errors %}<div class="text-danger small mt-1">{{ error }}</div>{% endfor %}
+                </div>
+                <div class="col-6 col-md-2">
+                    <label class="form-label" for="{{ preorder_form.size.id_for_label }}">{{ preorder_form.size.label }}</label>
+                    {{ preorder_form.size }}
+                    {% for error in preorder_form.size.errors %}<div class="text-danger small mt-1">{{ error }}</div>{% endfor %}
+                </div>
+                <div class="col-6 col-md-2">
+                    <label class="form-label" for="{{ preorder_form.quantity.id_for_label }}">{{ preorder_form.quantity.label }}</label>
+                    {{ preorder_form.quantity }}
+                    {% for error in preorder_form.quantity.errors %}<div class="text-danger small mt-1">{{ error }}</div>{% endfor %}
+                </div>
+                <div class="col-12 col-md-1 d-grid align-items-end">
+                    <button type="submit" class="btn btn-primary">Salvar</button>
+                </div>
+            </form>
+        </section>
+
+        <section class="panel-card">
+            <div class="panel-card__header">
+                <p class="eyebrow">Reservas</p>
+                <h3>Nomes recentes</h3>
+            </div>
+            <div class="table-responsive">
+                <table class="table team-table align-middle mb-0">
+                    <thead>
+                        <tr>
+                            <th>Nome</th>
+                            <th>Cor</th>
+                            <th>Tamanho</th>
+                            <th>Quantidade</th>
+                            <th>Status</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for item in preorders %}
+                            <tr>
+                                <td>{{ item.volunteer_name }}</td>
+                                <td>{{ item.get_color_display }}</td>
+                                <td>{{ item.get_size_display }}</td>
+                                <td>{{ item.quantity }}</td>
+                                <td><span class="status-pill {% if item.status == 'sincronizado' %}status-pill--concluida{% elif item.status == 'importado' %}status-pill--andamento{% else %}status-pill--ativo{% endif %}">{{ item.get_status_display }}</span></td>
+                            </tr>
+                        {% empty %}
+                            <tr><td colspan="5"><p class="empty-state">Nenhuma pré-encomenda ainda.</p></td></tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+        </section>
+    </div>
+
+    <div class="tab-pane fade {% if active_tab == 'imports' %}show active{% endif %}">
+        <section class="panel-card panel-card--spaced">
+            <div class="panel-card__header panel-card__header--split">
+                <div>
+                    <p class="eyebrow">Google Planilhas</p>
+                    <h3>Importar linhas da planilha</h3>
+                    <p class="panel-card__note">Traga a planilha para a aba interna e reserve o estoque imediatamente.</p>
+                </div>
+            </div>
+            <form method="post" class="row g-3">
+                {% csrf_token %}
+                <input type="hidden" name="action" value="import_sheet">
+                <div class="col-12 col-md-6">
+                    <label class="form-label" for="{{ import_form.sheet_link.id_for_label }}">{{ import_form.sheet_link.label }}</label>
+                    {{ import_form.sheet_link }}
+                    <div class="form-text">Cole o link da planilha do Google. Depois disso, o sistema reaproveita esse link automaticamente.</div>
+                </div>
+                <div class="col-12 col-md-3 d-grid align-items-end">
+                    <button type="submit" class="btn btn-primary">Importar</button>
+                </div>
+            </form>
+        </section>
+
+        <section class="panel-card">
+            <div class="panel-card__header">
+                <p class="eyebrow">Dados importados</p>
+                <h3>Aba interna</h3>
+            </div>
+            <div class="table-responsive">
+                <table class="table team-table align-middle mb-0">
+                    <thead>
+                        <tr>
+                            <th>Nome</th>
+                            <th>Cor</th>
+                            <th>Tamanho</th>
+                            <th>Quantidade</th>
+                            <th>Origem</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for item in preorders %}
+                            <tr>
+                                <td>{{ item.volunteer_name }}</td>
+                                <td>{{ item.get_color_display }}</td>
+                                <td>{{ item.get_size_display }}</td>
+                                <td>{{ item.quantity }}</td>
+                                <td>{{ item.get_source_display }}</td>
+                            </tr>
+                        {% empty %}
+                            <tr><td colspan="5"><p class="empty-state">Nenhuma linha importada ainda.</p></td></tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+        </section>
+    </div>
+
+    <div class="tab-pane fade {% if active_tab == 'edit' %}show active{% endif %}">
+        <section class="panel-card panel-card--spaced">
+            <div class="panel-card__header panel-card__header--split">
+                <div>
+                    <p class="eyebrow">Editar pagamento</p>
+                    <h3>Marcar quem pagou</h3>
+                    <p class="panel-card__note">Pix/Dinheiro = R$ 65,00 e Cartão = R$ 70,00.</p>
+                </div>
+            </div>
+            <form method="get" class="row g-3 mb-3">
+                <input type="hidden" name="tab" value="edit">
+                <div class="col-12 col-md-6">
+                    <label class="form-label" for="{{ search_form.q.id_for_label }}">{{ search_form.q.label }}</label>
+                    {{ search_form.q }}
+                </div>
+                <div class="col-12 col-md-2 d-grid align-items-end">
+                    <button type="submit" class="btn btn-outline-primary">Buscar</button>
+                </div>
+            </form>
+            <form method="post" class="row g-3">
+                {% csrf_token %}
+                <input type="hidden" name="action" value="update_payment">
+                <div class="col-12 col-md-6">
+                    <label class="form-label" for="{{ payment_form.preorder_id.id_for_label }}">Pré-encomenda</label>
+                    <select name="preorder_id" id="{{ payment_form.preorder_id.id_for_label }}" class="form-select" required>
+                        <option value="">Selecione</option>
+                        {% for item in edit_preorders %}
+                            <option value="{{ item.id }}">{{ item.volunteer_name }} - {{ item.get_color_display }} {{ item.get_size_display }}{% if item.payment_method %} - {{ item.get_payment_method_display }}{% endif %}</option>
+                        {% endfor %}
+                    </select>
+                </div>
+                <div class="col-12 col-md-3">
+                    <label class="form-label" for="{{ payment_form.payment_status.id_for_label }}">{{ payment_form.payment_status.label }}</label>
+                    {{ payment_form.payment_status }}
+                </div>
+                <div class="col-12 col-md-3">
+                    <label class="form-label" for="{{ payment_form.payment_method.id_for_label }}">{{ payment_form.payment_method.label }}</label>
+                    {{ payment_form.payment_method }}
+                </div>
+                <div class="col-12 col-md-12">
+                    <small class="text-muted">Use <strong>Pendente</strong> antes do pagamento e <strong>Pago</strong> depois de receber.</small>
+                </div>
+                <div class="col-12 col-md-2 d-grid align-items-end">
+                    <button type="submit" class="btn btn-primary">Salvar</button>
+                </div>
+            </form>
+        </section>
+
+        <section class="panel-card">
+            <div class="panel-card__header">
+                <p class="eyebrow">Pagamentos registrados</p>
+                <h3>Resumo</h3>
+            </div>
+            <div class="table-responsive">
+                <table class="table team-table align-middle mb-0">
+                    <thead>
+                        <tr>
+                            <th>Nome</th>
+                            <th>Forma</th>
+                            <th>Valor</th>
+                            <th>Status</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for item in edit_preorders %}
+                            <tr>
+                                <td>{{ item.volunteer_name }}</td>
+                                <td>{{ item.get_payment_status_display }}</td>
+                                <td>{% if item.payment_status == 'pago' %}R$ {{ item.payment_value|floatformat:2 }}{% else %}-{% endif %}</td>
+                                <td>{{ item.get_status_display }}</td>
+                            </tr>
+                        {% empty %}
+                            <tr><td colspan="4"><p class="empty-state">Nenhuma pré-encomenda cadastrada.</p></td></tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+        </section>
+    </div>
+
+    <div class="tab-pane fade {% if active_tab == 'stock' %}show active{% endif %}">
+        <section class="dashboard-grid">
+            <article class="panel-card">
+                <div class="panel-card__header">
+                    <p class="eyebrow">Comparação de pagamentos</p>
+                    <h3>Vendas x pré-encomendas</h3>
+                </div>
+                <div class="chart-wrap"><canvas id="paymentChart"></canvas></div>
+                {{ payment_chart_labels|json_script:'payment-chart-labels' }}
+                {{ payment_chart_values|json_script:'payment-chart-values' }}
+            </article>
+            <article class="panel-card">
+                <div class="panel-card__header">
+                    <p class="eyebrow">Evolução do estoque</p>
+                    <h3>Evolução do saldo</h3>
+                </div>
+                <div class="chart-wrap"><canvas id="evolutionChart"></canvas></div>
+                {{ evolution_chart_labels|json_script:'evolution-chart-labels' }}
+                {{ evolution_chart_values|json_script:'evolution-chart-values' }}
+            </article>
+        </section>
+
+        <section class="panel-card panel-card--spaced mt-3">
+            <div class="panel-card__header">
+                <p class="eyebrow">Estoque por cor / tamanho</p>
+                <h3>Inventário reservado</h3>
+            </div>
+            <div class="table-responsive">
+                <table class="table team-table align-middle mb-0">
+                    <thead>
+                        <tr>
+                            <th>Cor</th><th>Tamanho</th><th>Inicial</th><th>Vendido</th><th>Reservado</th><th>Saldo</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for row in inventory_matrix %}
+                            {% for slot in row.sizes %}
+                                <tr>
+                                    <td>{{ row.label }}</td>
+                                    <td>{{ slot.label }}</td>
+                                    <td>{{ slot.initial }}</td>
+                                    <td>{{ slot.sold }}</td>
+                                    <td>{{ slot.reserved }}</td>
+                                    <td><strong>{{ slot.balance }}</strong></td>
+                                </tr>
+                            {% endfor %}
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+        </section>
+    </div>
+</div>
+{% endblock %}

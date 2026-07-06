@@ -1,0 +1,271 @@
+{% extends 'dashboard/base.html' %}
+
+{% block content %}
+<section class="hero-card hero-card--compact">
+    <div>
+        <p class="eyebrow">Aconselhamento</p>
+        <h2>Quartos e acampantes</h2>
+        <p class="hero-card__text">Importe acampantes da planilha, organize os quartos e mova os nomes por arrastar e soltar.</p>
+    </div>
+    <div class="hero-card__stats">
+        <div><strong>{{ total_campistas }}</strong><span>Total de acampantes</span></div>
+        <div><strong>{{ campistas_nao_alocados }}</strong><span>Sem quarto</span></div>
+        <div><strong>{{ salas_cheias }}</strong><span>Quartos cheios</span></div>
+        <div><strong>{{ vagas_livres }}</strong><span>Vagas livres</span></div>
+    </div>
+</section>
+
+{% if messages %}
+    {% for message in messages %}
+        <div class="alert alert-{{ message.tags|default:'info' }}">{{ message }}</div>
+    {% endfor %}
+{% endif %}
+
+<div class="dashboard-grid dashboard-grid--aconselhamento">
+    <aside class="panel-card panel-card--spaced aconselhamento-lateral">
+        <div class="panel-card__header">
+            <p class="eyebrow">Filtros</p>
+            <h3>Acampantes disponíveis</h3>
+        </div>
+        <form method="get" class="row g-2 mb-3">
+            <input type="hidden" name="tab" value="aconselhamento">
+            <div class="col-12">
+                <label class="form-label" for="{{ filtro_form.nome.id_for_label }}">{{ filtro_form.nome.label }}</label>
+                {{ filtro_form.nome }}
+            </div>
+            <div class="col-12">
+                <label class="form-label" for="{{ filtro_form.sexo.id_for_label }}">{{ filtro_form.sexo.label }}</label>
+                {{ filtro_form.sexo }}
+            </div>
+            <div class="col-12">
+                <label class="form-label" for="{{ filtro_form.celula.id_for_label }}">{{ filtro_form.celula.label }}</label>
+                {{ filtro_form.celula }}
+            </div>
+            <div class="col-6">
+                <label class="form-label" for="{{ filtro_form.idade_min.id_for_label }}">{{ filtro_form.idade_min.label }}</label>
+                {{ filtro_form.idade_min }}
+            </div>
+            <div class="col-6">
+                <label class="form-label" for="{{ filtro_form.idade_max.id_for_label }}">{{ filtro_form.idade_max.label }}</label>
+                {{ filtro_form.idade_max }}
+            </div>
+            <div class="col-12 d-grid">
+                <button type="submit" class="btn btn-outline-primary">Filtrar</button>
+            </div>
+        </form>
+
+        <div class="drop-target drop-target--sidebar" data-sala-id="">
+            <div class="drop-target__label">Solte aqui para deixar sem quarto</div>
+            <div class="campista-list">
+                {% for campista in campistas_disponiveis %}
+                    <article class="campista-card" draggable="true" data-campista-id="{{ campista.id }}" data-sala-id="">
+                        <strong>{{ campista.nome }}</strong>
+                        <span>{% if campista.idade %}{{ campista.idade }} anos{% else %}Idade não informada{% endif %}</span>
+                        <span>{% if campista.sexo %}{{ campista.get_sexo_display }}{% else %}Sexo não informado{% endif %}</span>
+                        <span>{% if campista.celula %}Célula {{ campista.celula }}{% else %}Sem célula{% endif %}</span>
+                    </article>
+                {% empty %}
+                    <p class="empty-state">Nenhum acampante sem quarto no momento.</p>
+                {% endfor %}
+            </div>
+        </div>
+
+        <form method="post" action="{{ import_url }}" class="panel-card panel-card--spaced mt-3">
+            {% csrf_token %}
+            <input type="hidden" name="acao" value="importar_planilha">
+            <div class="panel-card__header">
+                <p class="eyebrow">Planilha</p>
+                <h3>Importar acampantes</h3>
+            </div>
+            <label class="form-label" for="{{ import_form.sheet_link.id_for_label }}">{{ import_form.sheet_link.label }}</label>
+            {{ import_form.sheet_link }}
+            <button type="submit" class="btn btn-primary mt-3">Importar agora</button>
+        </form>
+    </aside>
+
+    <section class="panel-card panel-card--spaced">
+        <div class="panel-card__header panel-card__header--split">
+            <div>
+                <p class="eyebrow">Quartos</p>
+                <h3>Gestão de alojamento</h3>
+                <p class="panel-card__note">Arraste um campista para dentro do quarto desejado.</p>
+            </div>
+        </div>
+
+        <form method="post" action="{{ sala_create_url }}" class="row g-3 mb-4">
+            {% csrf_token %}
+            <div class="col-12 col-md-4">
+                <label class="form-label" for="{{ sala_form.nome.id_for_label }}">{{ sala_form.nome.label }}</label>
+                {{ sala_form.nome }}
+            </div>
+            <div class="col-6 col-md-2">
+                <label class="form-label" for="{{ sala_form.capacidade.id_for_label }}">{{ sala_form.capacidade.label }}</label>
+                {{ sala_form.capacidade }}
+            </div>
+            <div class="col-6 col-md-3">
+                <label class="form-label" for="{{ sala_form.caracteristica.id_for_label }}">{{ sala_form.caracteristica.label }}</label>
+                {{ sala_form.caracteristica }}
+            </div>
+            <div class="col-12 col-md-3">
+                <label class="form-label" for="{{ sala_form.observacoes.id_for_label }}">{{ sala_form.observacoes.label }}</label>
+                {{ sala_form.observacoes }}
+            </div>
+            <div class="col-12 d-grid d-md-flex justify-content-md-end">
+                <button type="submit" class="btn btn-primary">Criar quarto</button>
+            </div>
+        </form>
+
+        <div class="sala-grid">
+            {% for sala in salas %}
+                <article class="sala-card drop-target {% if sala.ocupacao_total >= sala.capacidade %}sala-card--lotada{% endif %}" data-sala-id="{{ sala.id }}">
+                    <div class="sala-card__header">
+                        <div>
+                            <h4>{{ sala.nome }}</h4>
+                            <p>{{ sala.get_caracteristica_display }} • {{ sala.capacidade }} lugares</p>
+                        </div>
+                        <div style="display: flex; gap: 0.5rem; align-items: center;">
+                            <span class="status-pill {% if sala.ocupacao_total >= sala.capacidade %}status-pill--concluida{% elif sala.vagas_livres %}status-pill--andamento{% endif %}">{{ sala.ocupacao_total }}/{{ sala.capacidade }}</span>
+                            <button type="button" class="btn btn-sm btn-outline-secondary" data-bs-toggle="modal" data-bs-target="#editarQuartoModal{{ sala.id }}" title="Editar">✏️</button>
+                        </div>
+                    </div>
+                    {% if sala.observacoes %}<p class="sala-card__obs">{{ sala.observacoes }}</p>{% endif %}
+                    <div class="sala-card__campos">
+                        {% for campista in sala.campistas.all %}
+                            <article class="campista-card campista-card--mini" draggable="true" data-campista-id="{{ campista.id }}" data-sala-id="{{ sala.id }}">
+                                <strong>{{ campista.nome }}</strong>
+                                <span>{% if campista.idade %}{{ campista.idade }} anos{% else %}Idade não informada{% endif %}</span>
+                                <span>{% if campista.celula %}Célula {{ campista.celula }}{% else %}Sem célula{% endif %}</span>
+                            </article>
+                        {% empty %}
+                            <p class="empty-state">Nenhum acampante alocado.</p>
+                        {% endfor %}
+                    </div>
+                </article>
+            {% empty %}
+                <p class="empty-state">Nenhum quarto criado ainda.</p>
+            {% endfor %}
+        </div>
+
+        <!-- Modais de edição de quartos -->
+        {% for sala in salas %}
+        <div class="modal fade" id="editarQuartoModal{{ sala.id }}" tabindex="-1">
+            <div class="modal-dialog">
+                <div class="modal-content">
+                    <div class="modal-header">
+                        <h5 class="modal-title">Editar Quarto: {{ sala.nome }}</h5>
+                        <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                    </div>
+                    <form method="post" action="{% url 'aconselhamento_sala_editar' sala.id %}">
+                        {% csrf_token %}
+                        <div class="modal-body">
+                            <div class="mb-3">
+                                <label for="nome_{{ sala.id }}" class="form-label">Nome do Quarto</label>
+                                <input type="text" class="form-control" id="nome_{{ sala.id }}" name="nome" value="{{ sala.nome }}" required>
+                            </div>
+                            <div class="mb-3">
+                                <label for="capacidade_{{ sala.id }}" class="form-label">Capacidade</label>
+                                <input type="number" class="form-control" id="capacidade_{{ sala.id }}" name="capacidade" value="{{ sala.capacidade }}" min="1" required>
+                            </div>
+                            <div class="mb-3">
+                                <label for="caracteristica_{{ sala.id }}" class="form-label">Características</label>
+                                <select class="form-select" id="caracteristica_{{ sala.id }}" name="caracteristica" required>
+                                    <option value="masculino" {% if sala.caracteristica == 'masculino' %}selected{% endif %}>Masculino</option>
+                                    <option value="feminino" {% if sala.caracteristica == 'feminino' %}selected{% endif %}>Feminino</option>
+                                </select>
+                            </div>
+                            <div class="mb-3">
+                                <label for="observacoes_{{ sala.id }}" class="form-label">Observações</label>
+                                <textarea class="form-control" id="observacoes_{{ sala.id }}" name="observacoes" rows="2">{{ sala.observacoes }}</textarea>
+                            </div>
+                        </div>
+                        <div class="modal-footer">
+                            <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancelar</button>
+                            <button type="submit" class="btn btn-primary">Salvar Alterações</button>
+                        </div>
+                    </form>
+                </div>
+            </div>
+        </div>
+        {% endfor %}
+    </section>
+</div>
+
+<section class="panel-card panel-card--spaced mt-3">
+    <div class="panel-card__header">
+        <p class="eyebrow">Histórico</p>
+        <h3>Movimentações</h3>
+    </div>
+    <div class="historico-list">
+        {% for item in historicos %}
+            <article class="historico-item">
+                <strong>{{ item.campista.nome }}</strong>
+                <span>{{ item.acao }}</span>
+                <p>{% if item.sala_origem %}{{ item.sala_origem.nome }}{% else %}Sem quarto{% endif %} → {% if item.sala_destino %}{{ item.sala_destino.nome }}{% else %}Sem quarto{% endif %}</p>
+                {% if item.detalhe %}<small>{{ item.detalhe }}</small>{% endif %}
+            </article>
+        {% empty %}
+            <p class="empty-state">Nenhum movimento registrado ainda.</p>
+        {% endfor %}
+    </div>
+</section>
+
+<script>
+(function () {
+    const urlMover = "{{ campista_move_url }}";
+
+    function getCookie(name) {
+        const value = `; ${document.cookie}`;
+        const parts = value.split(`; ${name}=`);
+        if (parts.length === 2) return parts.pop().split(';').shift();
+        return '';
+    }
+
+    const csrfToken = getCookie('csrftoken');
+    const campistas = document.querySelectorAll('[data-campista-id]');
+    const destinos = document.querySelectorAll('.drop-target');
+
+    campistas.forEach((card) => {
+        card.addEventListener('dragstart', (event) => {
+            event.dataTransfer.setData('text/plain', card.dataset.campistaId);
+            event.dataTransfer.effectAllowed = 'move';
+        });
+    });
+
+    destinos.forEach((zona) => {
+        zona.addEventListener('dragover', (event) => {
+            event.preventDefault();
+            zona.classList.add('drop-target--ativa');
+        });
+        zona.addEventListener('dragleave', () => {
+            zona.classList.remove('drop-target--ativa');
+        });
+        zona.addEventListener('drop', async (event) => {
+            event.preventDefault();
+            zona.classList.remove('drop-target--ativa');
+            const campistaId = event.dataTransfer.getData('text/plain');
+            const salaId = zona.dataset.salaId || '';
+            if (!campistaId) return;
+
+            const formData = new FormData();
+            formData.append('campista_id', campistaId);
+            formData.append('sala_id', salaId);
+            try {
+                const response = await fetch(urlMover, {
+                    method: 'POST',
+                    headers: {'X-CSRFToken': csrfToken},
+                    body: formData,
+                });
+                const dados = await response.json();
+                if (!response.ok || !dados.ok) {
+                    alert(dados.mensagem || 'Não foi possível mover o campista.');
+                    return;
+                }
+                window.location.reload();
+            } catch (error) {
+                alert('Falha ao mover o campista.');
+            }
+        });
+    });
+})();
+</script>
+{% endblock %}
