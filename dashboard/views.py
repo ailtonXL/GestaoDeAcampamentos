@@ -102,7 +102,7 @@ def _commercial_allowed(user):
         return False
     if user.is_superuser:
         return True
-    return user.role in {User.Role.ADMINISTRACAO, User.Role.NOBREAK}
+    return user.role in {User.Role.ADMINISTRACAO, User.Role.NOBREAK, User.Role.CHEFIA_LOJINHA_CANTINA}
 
 
 def _ensure_inventory_grid():
