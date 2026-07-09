@@ -158,12 +158,12 @@ class PreparoForm(forms.ModelForm):
 
 class SaleForm(forms.Form):
     product_name = forms.CharField(
-        label='Produto',
+        label='Nome',
         max_length=120,
-        widget=forms.TextInput(attrs={'class': 'form-control', 'placeholder': 'Nome do produto'}),
+        widget=forms.TextInput(attrs={'class': 'form-control', 'placeholder': 'Nome'}),
     )
     color = forms.ChoiceField(
-        label='Cor',
+        label='Modelo',
         choices=ProductColorChoices.choices,
         widget=forms.Select(attrs={'class': 'form-select'}),
     )

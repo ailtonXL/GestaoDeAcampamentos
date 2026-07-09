@@ -59,8 +59,8 @@ class Tarefa(models.Model):
 
 
 class ProductColorChoices(models.TextChoices):
-    WHITE = 'white', 'Branco'
-    BLACK = 'black', 'Preto'
+    WHITE = 'white', 'Camisa SEND ME'
+    BLACK = 'black', 'Camisa I BELONG TO JESUS'
 
 
 class ProductSizeChoices(models.TextChoices):
