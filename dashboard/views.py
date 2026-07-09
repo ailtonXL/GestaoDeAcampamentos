@@ -21,7 +21,7 @@ from django.utils import timezone
 from django.db import transaction
 
 from accounts.models import User
-from .forms import AconselhamentoFiltroForm, AconselhamentoImportarForm, AconselhamentoSalaForm, InventoryAdjustForm, MembroForm, MembroQuickForm, PreOrderForm, PreOrderPaymentForm, PreOrderSearchForm, PreparoForm, SaleForm, SheetImportForm, TaskForm
+from .forms import AconselhamentoFiltroForm, AconselhamentoImportarForm, AconselhamentoSalaForm, DocumentoImportanteForm, InventoryAdjustForm, MembroForm, MembroImportForm, MembroQuickForm, PreOrderForm, PreOrderPaymentForm, PreOrderSearchForm, PreparoForm, SaleForm, SheetImportForm, TaskForm
 from .models import (
     ClassroomStatusChoices,
     AconselhamentoCampista,
@@ -30,11 +30,14 @@ from .models import (
     AconselhamentoHistorico,
     AconselhamentoSala,
     AconselhamentoSalaCaracteristicaChoices,
+    DocumentoImportante,
     InventorySku,
     EquipeChoices,
     Membro,
+    MembroSheetConfig,
     PaymentMethodChoices,
     PreOrderRecord,
+    PreOrderPaymentStatusChoices,
     PreOrderSheetConfig,
     PreOrderSourceChoices,
     PreOrderStatusChoices,
@@ -305,14 +308,68 @@ def _read_preorders_from_sheet(sheet_tab=''):
         return text
 
     header_map = {normalize_header(value): index for index, value in enumerate(rows[0])}
+    name_candidates = (
+        'nome', 'nome_completo', 'nomecompleto', 'voluntario', 'voluntario_nome', 'volunteer_name',
+        'nome_do_comprador', 'comprador', 'seu_nome', 'name',
+    )
+    color_candidates = (
+        'cor', 'color', 'modelo', 'produto', 'camisa', 'selecione_o_modelo_que_deseja',
+        'selecione_o_modelo_que_deseja_atencao_por_favor_ter_a_consciencia_de_nao_divulgar_as',
+    )
+    size_candidates = (
+        'tamanho', 'size', 'selecione_seu_tamanho',
+    )
+    quantity_candidates = ('quantidade', 'qtd', 'quantity')
+    external_key_candidates = ('id', 'chave', 'external_key', 'codigo', 'código')
+
+    has_name_column = any(candidate in header_map for candidate in name_candidates)
+    if has_name_column:
+        data_rows = rows[1:]
+    else:
+        # If there is no recognizable header, treat all rows as data.
+        data_rows = rows
+    def normalize_color_value(value):
+        text = str(value or '').strip()
+        normalized = normalize_choice(text, ProductColorChoices.choices)
+        allowed_colors = {choice for choice, _ in ProductColorChoices.choices}
+        if normalized in allowed_colors:
+            return normalized
+        lowered = text.lower()
+        if any(token in lowered for token in ('white', 'branco', 'send me')):
+            return ProductColorChoices.WHITE
+        if any(token in lowered for token in ('black', 'preto', 'belong', 'jesus')):
+            return ProductColorChoices.BLACK
+        return ProductColorChoices.WHITE
+
+    def normalize_size_value(value):
+        normalized = normalize_choice(value, ProductSizeChoices.choices)
+        allowed_sizes = {choice for choice, _ in ProductSizeChoices.choices}
+        if normalized in allowed_sizes:
+            return normalized
+        return ProductSizeChoices.PP
+
     imported_rows = []
-    for index, row in enumerate(rows[1:], start=2):
-        name_value = pick_value(header_map, row, 'nome', 'voluntario', 'voluntario_nome', 'nome_completo', 'volunteer_name', default=row[0] if row else '')
-        color_value = pick_value(header_map, row, 'cor', 'color', default=row[1] if len(row) > 1 else '')
-        size_value = pick_value(header_map, row, 'tamanho', 'size', default=row[2] if len(row) > 2 else '')
-        quantity_value = pick_value(header_map, row, 'quantidade', 'qtd', 'quantity', default=row[3] if len(row) > 3 else '1')
-        external_key = pick_value(header_map, row, 'id', 'chave', 'external_key', 'codigo', 'código', default='')
-        if not name_value or not color_value or not size_value:
+    for index, row in enumerate(data_rows, start=2 if has_name_column else 1):
+        name_value = pick_value(header_map, row, *name_candidates, default='')
+        if not name_value and len(row) > 1:
+            name_value = row[1]
+        if not name_value and row:
+            name_value = row[0]
+
+        color_value = pick_value(header_map, row, *color_candidates, default='')
+        if not color_value and len(row) > 4:
+            color_value = row[4]
+
+        size_value = pick_value(header_map, row, *size_candidates, default='')
+        if not size_value and len(row) > 3:
+            size_value = row[3]
+        if not size_value and len(row) > 2:
+            size_value = row[2]
+
+        quantity_value = pick_value(header_map, row, *quantity_candidates, default='1')
+        external_key = pick_value(header_map, row, *external_key_candidates, default='')
+
+        if not str(name_value or '').strip() or not str(size_value or '').strip():
             continue
         if not external_key:
             raw_signature = f'{name_value}|{color_value}|{size_value}|{quantity_value}'
@@ -323,9 +380,9 @@ def _read_preorders_from_sheet(sheet_tab=''):
             quantity_value = 1
         imported_rows.append({
             'external_key': external_key,
-            'volunteer_name': name_value,
-            'color': normalize_choice(color_value, ProductColorChoices.choices),
-            'size': normalize_choice(size_value, ProductSizeChoices.choices),
+            'volunteer_name': str(name_value).strip(),
+            'color': normalize_color_value(color_value),
+            'size': normalize_size_value(size_value),
             'quantity': quantity_value,
             'sheet_row_number': index,
             'raw': row,
@@ -338,18 +395,18 @@ def _sync_preorders_from_sheet(sheet_link, created_by=None, delete_missing=False
     if not sheet_link:
         sheet_link = _get_saved_preorder_sheet_link()
     if not sheet_link:
-        return 0, 0
+        return 0, 0, 0
 
     imported_rows = _read_preorders_from_sheet(sheet_link)
     created_count = 0
     deleted_count = 0
+    reserve_failed_count = 0
     with transaction.atomic():
         for row in imported_rows:
             if PreOrderRecord.objects.filter(external_key=row['external_key']).exists():
                 continue
             ok, _sku = _reserve_inventory(row['color'], row['size'], row['quantity'])
-            if not ok:
-                continue
+            reserve_failed_count += 0 if ok else 1
             PreOrderRecord.objects.create(
                 external_key=row['external_key'],
                 source=PreOrderSourceChoices.SHEET,
@@ -361,7 +418,11 @@ def _sync_preorders_from_sheet(sheet_link, created_by=None, delete_missing=False
                 payment_method='',
                 status=PreOrderStatusChoices.IMPORTADO,
                 sheet_row_number=row['sheet_row_number'],
-                sheet_payload=row['raw'],
+                sheet_payload={
+                    'raw': row['raw'],
+                    'reserved_applied': ok,
+                    'reserve_error': '' if ok else 'Saldo insuficiente para reservar automaticamente.',
+                },
                 created_by=created_by,
                 imported_at=timezone.now(),
             )
@@ -373,11 +434,12 @@ def _sync_preorders_from_sheet(sheet_link, created_by=None, delete_missing=False
                 source=PreOrderSourceChoices.SHEET,
             ).exclude(external_key__in=imported_keys)
             for preorder in obsolete_preorders:
-                _release_reserved_inventory(preorder.color, preorder.size, preorder.quantity)
+                if _preorder_has_reserved_inventory(preorder):
+                    _release_reserved_inventory(preorder.color, preorder.size, preorder.quantity)
                 preorder.delete()
                 deleted_count += 1
 
-    return created_count, deleted_count
+    return created_count, deleted_count, reserve_failed_count
 
 
 def _get_saved_aconselhamento_sheet_link():
@@ -495,6 +557,15 @@ def _release_reserved_inventory(color, size, quantity):
     return sku
 
 
+def _preorder_has_reserved_inventory(preorder):
+    if preorder.source != PreOrderSourceChoices.SHEET:
+        return True
+    payload = preorder.sheet_payload
+    if isinstance(payload, dict):
+        return bool(payload.get('reserved_applied', True))
+    return True
+
+
 def _sell_inventory(color, size, quantity):
     _ensure_inventory_grid()
     sku = InventorySku.objects.select_for_update().get(color=color, size=size)
@@ -558,6 +629,215 @@ def _can_view_members_index(user):
     return _can_manage_membership(user)
 
 
+def _can_view_overview(user):
+    if not user.is_authenticated:
+        return False
+    if user.is_superuser:
+        return True
+    return user.role == User.Role.NOBREAK
+
+
+def _sync_members_from_sheet(sheet_link, allowed_teams):
+    rows = _fetch_sheet_rows_via_csv(sheet_link)
+    if not rows:
+        return 0, 0, 0, 0
+
+    def normalize_text(value):
+        normalized = unicodedata.normalize('NFKD', str(value or '').strip()).encode('ascii', 'ignore').decode('ascii')
+        return normalized.lower().replace(' ', '_').replace('-', '_')
+
+    def pick_value(mapping, row, *candidates, default=''):
+        for candidate in candidates:
+            if candidate in mapping:
+                idx = mapping[candidate]
+                if idx < len(row) and row[idx] not in (None, ''):
+                    return row[idx]
+        return default
+
+    def parse_active(value):
+        text = str(value or '').strip().lower()
+        return text not in {'0', 'nao', 'não', 'false', 'falso', 'inativo'}
+
+    team_map = {}
+    for value, label in EquipeChoices.choices:
+        if value not in allowed_teams:
+            continue
+        team_map[normalize_text(value)] = value
+        team_map[normalize_text(label)] = value
+        team_map[normalize_text(value).replace('_', '')] = value
+        team_map[normalize_text(label).replace('_', '')] = value
+
+    team_aliases = {
+        'lojinhaecantina': EquipeChoices.LOJINHA_CANTINA,
+        'lojinha_cantina': EquipeChoices.LOJINHA_CANTINA,
+        'cantina': EquipeChoices.LOJINHA_CANTINA,
+        'chefiadelojinhaecantina': EquipeChoices.LOJINHA_CANTINA,
+        'oracao': EquipeChoices.ORACAO,
+        'oração': EquipeChoices.ORACAO,
+        'comunicacao': EquipeChoices.COMUNICACAO,
+        'comunicação': EquipeChoices.COMUNICACAO,
+    }
+    for alias, team_value in team_aliases.items():
+        if team_value in allowed_teams:
+            team_map[normalize_text(alias)] = team_value
+            team_map[normalize_text(alias).replace('_', '')] = team_value
+
+    header_map = {normalize_text(value): index for index, value in enumerate(rows[0])}
+    nome_candidates = ('nome', 'membro', 'name', 'nome_completo', 'membro_nome')
+    equipe_candidates = ('equipe', 'setor', 'ministerio', 'ministério', 'area', 'área', 'team')
+    ativo_candidates = ('ativo', 'status', 'active', 'situacao', 'situação')
+    has_nome_column = any(candidate in header_map for candidate in nome_candidates)
+    has_equipe_column = any(candidate in header_map for candidate in equipe_candidates)
+    has_ativo_column = any(candidate in header_map for candidate in ativo_candidates)
+    if not has_nome_column:
+        header_map = {'nome': 0, 'equipe': 1, 'ativo': 2}
+        has_nome_column = True
+        has_equipe_column = len(rows[0]) > 1
+        has_ativo_column = len(rows[0]) > 2
+        data_rows = rows
+    else:
+        data_rows = rows[1:]
+
+    if EquipeChoices.PESSOAL in allowed_teams:
+        default_team = EquipeChoices.PESSOAL
+    else:
+        default_team = sorted(allowed_teams)[0] if allowed_teams else None
+
+    created_count = 0
+    updated_count = 0
+    skipped_count = 0
+    deleted_count = 0
+
+    for row in data_rows:
+        nome = str(pick_value(header_map, row, *nome_candidates, default='')).strip()
+        equipe_raw = pick_value(header_map, row, *equipe_candidates, default='')
+        ativo_raw = pick_value(header_map, row, *ativo_candidates, default='sim')
+
+        if not nome:
+            skipped_count += 1
+            continue
+
+        existing_member = Membro.objects.filter(nome__iexact=nome, equipe__in=allowed_teams).first()
+        team_key = normalize_text(equipe_raw)
+        equipe = team_map.get(team_key) or team_map.get(team_key.replace('_', ''))
+
+        if not equipe:
+            if existing_member:
+                equipe = existing_member.equipe
+            elif default_team:
+                equipe = default_team
+
+        if not equipe:
+            skipped_count += 1
+            continue
+
+        ativo = parse_active(ativo_raw) if has_ativo_column else (existing_member.ativo if existing_member else True)
+
+        if existing_member:
+            existing_member.nome = nome
+            existing_member.equipe = equipe
+            existing_member.ativo = ativo
+            existing_member.save(update_fields=['nome', 'equipe', 'ativo'])
+            updated_count += 1
+        else:
+            Membro.objects.create(nome=nome, equipe=equipe, ativo=ativo)
+            created_count += 1
+
+    return created_count, updated_count, skipped_count, deleted_count
+
+
+def _get_saved_member_sheet_config():
+    config, _ = MembroSheetConfig.objects.get_or_create(pk=1)
+    return config
+
+
+def _save_member_sheet_config(sheet_link='', mirror_mode=True, auto_sync=True):
+    config, _ = MembroSheetConfig.objects.get_or_create(pk=1)
+    sheet_link = str(sheet_link or '').strip()
+    if sheet_link:
+        config.sheet_link = sheet_link
+    config.mirror_mode = bool(mirror_mode)
+    config.auto_sync = bool(auto_sync)
+    config.save(update_fields=['sheet_link', 'mirror_mode', 'auto_sync', 'updated_at'])
+    return config
+
+
+def _apply_member_mirror(sheet_link, allowed_teams):
+    rows = _fetch_sheet_rows_via_csv(sheet_link)
+    if not rows:
+        return 0
+
+    def normalize_text(value):
+        normalized = unicodedata.normalize('NFKD', str(value or '').strip()).encode('ascii', 'ignore').decode('ascii')
+        return normalized.lower().replace(' ', '_').replace('-', '_')
+
+    def pick_value(mapping, row, *candidates, default=''):
+        for candidate in candidates:
+            if candidate in mapping:
+                idx = mapping[candidate]
+                if idx < len(row) and row[idx] not in (None, ''):
+                    return row[idx]
+        return default
+
+    team_map = {}
+    for value, label in EquipeChoices.choices:
+        if value in allowed_teams:
+            team_map[normalize_text(value)] = value
+            team_map[normalize_text(label)] = value
+            team_map[normalize_text(value).replace('_', '')] = value
+            team_map[normalize_text(label).replace('_', '')] = value
+
+    header_map = {normalize_text(value): index for index, value in enumerate(rows[0])}
+    nome_candidates = ('nome', 'membro', 'name', 'nome_completo', 'membro_nome')
+    equipe_candidates = ('equipe', 'setor', 'ministerio', 'ministério', 'area', 'área', 'team')
+    has_nome_column = any(candidate in header_map for candidate in nome_candidates)
+    has_equipe_column = any(candidate in header_map for candidate in equipe_candidates)
+    if not has_nome_column:
+        header_map = {'nome': 0, 'equipe': 1}
+        has_equipe_column = len(rows[0]) > 1
+        data_rows = rows
+    else:
+        data_rows = rows[1:]
+
+    if EquipeChoices.PESSOAL in allowed_teams:
+        default_team = EquipeChoices.PESSOAL
+    else:
+        default_team = sorted(allowed_teams)[0] if allowed_teams else None
+
+    imported_keys = set()
+    for row in data_rows:
+        nome = str(pick_value(header_map, row, *nome_candidates, default='')).strip()
+        equipe_raw = pick_value(header_map, row, *equipe_candidates, default='')
+        if not nome:
+            continue
+
+        existing_member = Membro.objects.filter(nome__iexact=nome, equipe__in=allowed_teams).first()
+        team_key = normalize_text(equipe_raw)
+        equipe = team_map.get(team_key) or team_map.get(team_key.replace('_', ''))
+        if not equipe:
+            if existing_member:
+                equipe = existing_member.equipe
+            elif default_team:
+                equipe = default_team
+
+        if equipe:
+            imported_keys.add(f'{nome.lower()}|{equipe}')
+
+    # Protect against accidental mass delete when sheet cannot be parsed.
+    if not imported_keys:
+        return 0
+
+    deleted_count = 0
+    target_teams = {key.rsplit('|', 1)[-1] for key in imported_keys}
+    existing_members = Membro.objects.filter(equipe__in=target_teams)
+    for member in existing_members:
+        member_key = f'{member.nome.lower()}|{member.equipe}'
+        if member_key not in imported_keys:
+            member.delete()
+            deleted_count += 1
+    return deleted_count
+
+
 def _can_access_preparo(user):
     if not getattr(settings, 'FEATURE_PREPARO_ENABLED', False):
         return False
@@ -566,8 +846,51 @@ def _can_access_preparo(user):
     return user.role == User.Role.NOBREAK
 
 
+def _can_access_documentos(user):
+    if not user.is_authenticated:
+        return False
+    return user.role == User.Role.NOBREAK
+
+
 def _deny_access(team_slug):
     return HttpResponseForbidden(f'Voce nao tem permissao para acessar a area: {team_slug}.')
+
+
+@login_required
+def documentos_page(request):
+    if not _can_access_documentos(request.user):
+        return HttpResponseForbidden('Voce nao tem permissao para acessar os documentos importantes.')
+
+    if request.method == 'POST':
+        form = DocumentoImportanteForm(request.POST, request.FILES)
+        if form.is_valid():
+            document = form.save(commit=False)
+            document.criado_por = request.user
+            document.save()
+            messages.success(request, 'Documento salvo com sucesso.')
+            return redirect('documentos')
+    else:
+        form = DocumentoImportanteForm()
+
+    documentos = DocumentoImportante.objects.select_related('criado_por').all()
+    return render(request, 'dashboard/documentos.html', {
+        'page_title': 'Documentos Importantes',
+        'active_page': 'documentos',
+        'form': form,
+        'documentos': documentos,
+    })
+
+
+@login_required
+def documento_delete(request, pk):
+    if not _can_access_documentos(request.user):
+        return HttpResponseForbidden('Voce nao tem permissao para excluir documentos importantes.')
+    documento = get_object_or_404(DocumentoImportante, pk=pk)
+    if request.method == 'POST':
+        documento.delete()
+        messages.success(request, 'Documento removido com sucesso.')
+        return redirect('documentos')
+    return redirect('documentos')
 
 
 def _get_formspree_endpoint():
@@ -705,6 +1028,9 @@ def _publish_to_google_classroom(credentials, *, course_id, registro):
 
 @login_required
 def index(request):
+    if not _can_view_overview(request.user):
+        return HttpResponseForbidden('Voce nao tem permissao para acessar a Visao Geral.')
+
     allowed_teams = _allowed_teams_for_user(request.user)
     visible_teams = [team_slug for team_slug in TEAM_ORDER if team_slug in allowed_teams]
     if not visible_teams:
@@ -767,13 +1093,58 @@ def member_list(request):
     if not _can_view_members_index(request.user):
         return HttpResponseForbidden('Voce nao tem permissao para acessar a aba geral de membros.')
 
-    members, search_query, selected_team = _member_queryset(request)
     allowed_teams = _allowed_teams_for_user(request.user)
+    saved_config = _get_saved_member_sheet_config()
+    member_import_form = MembroImportForm(initial={
+        'sheet_link': saved_config.sheet_link,
+        'mirror_mode': saved_config.mirror_mode,
+        'auto_sync': saved_config.auto_sync,
+    })
+
+    if request.method == 'GET' and saved_config.sheet_link and saved_config.auto_sync:
+        created_count, updated_count, skipped_count, _ = _sync_members_from_sheet(saved_config.sheet_link, allowed_teams)
+        deleted_count = _apply_member_mirror(saved_config.sheet_link, allowed_teams) if saved_config.mirror_mode else 0
+        if created_count or updated_count:
+            messages.info(request, f'Sincronização automática: novos {created_count}, atualizados {updated_count}.')
+        if deleted_count:
+            messages.info(request, f'Modo espelho: {deleted_count} membros removidos por não estarem na planilha.')
+        if skipped_count:
+            messages.info(request, f'{skipped_count} linhas ignoradas na sincronização automática.')
+
+    if request.method == 'POST' and request.POST.get('action') == 'import_members':
+        member_import_form = MembroImportForm(request.POST)
+        if member_import_form.is_valid():
+            sheet_link = (member_import_form.cleaned_data.get('sheet_link') or saved_config.sheet_link or '').strip()
+            mirror_mode = bool(member_import_form.cleaned_data.get('mirror_mode'))
+            auto_sync = bool(member_import_form.cleaned_data.get('auto_sync'))
+            if not sheet_link:
+                messages.error(request, 'Informe o link da planilha ao menos uma vez para ativar a sincronização.')
+                return redirect('membros')
+
+            _save_member_sheet_config(sheet_link=sheet_link, mirror_mode=mirror_mode, auto_sync=auto_sync)
+            created_count, updated_count, skipped_count, _ = _sync_members_from_sheet(
+                sheet_link,
+                allowed_teams,
+            )
+            deleted_count = _apply_member_mirror(sheet_link, allowed_teams) if mirror_mode else 0
+            if created_count or updated_count:
+                messages.success(request, f'Importação concluída. Novos: {created_count}, atualizados: {updated_count}.')
+            if deleted_count:
+                messages.info(request, f'Modo espelho: {deleted_count} membros removidos por não estarem na planilha.')
+            if skipped_count:
+                messages.info(request, f'{skipped_count} linhas foram ignoradas (sem nome ou setor inválido).')
+            if not created_count and not updated_count and not skipped_count and not deleted_count:
+                messages.error(request, 'Não foi possível importar. Verifique o link e os cabeçalhos da planilha.')
+            return redirect('membros')
+        messages.error(request, 'Informe um link de planilha válido para importar membros.')
+
+    members, search_query, selected_team = _member_queryset(request)
     team_choices = [choice for choice in EquipeChoices.choices if choice[0] in allowed_teams]
     return render(request, 'dashboard/member_list.html', {
         'page_title': 'Membros',
         'active_page': 'membros',
         'members': members,
+        'member_import_form': member_import_form,
         'team_choices': team_choices,
         'search_query': search_query,
         'selected_team': selected_team,
@@ -1467,16 +1838,21 @@ def preorder_dashboard(request):
         delete_missing = import_form.data.get('delete_missing') in {'on', 'true', '1'}
         if sheet_link:
             _save_preorder_sheet_link(sheet_link)
-        created_count, deleted_count = _sync_preorders_from_sheet(
+        created_count, deleted_count, reserve_failed_count = _sync_preorders_from_sheet(
             sheet_link,
             created_by=request.user,
             delete_missing=delete_missing,
         )
         if created_count:
             messages.success(request, f'{created_count} pré-encomendas importadas da planilha.')
+        if reserve_failed_count:
+            messages.warning(
+                request,
+                f'{reserve_failed_count} pré-encomendas foram importadas sem reserva de estoque automática por falta de saldo.',
+            )
         if deleted_count:
             messages.info(request, f'{deleted_count} pré-encomendas foram apagadas do sistema por não estarem mais na planilha.')
-        if not created_count and not deleted_count:
+        if not created_count and not deleted_count and not reserve_failed_count:
             messages.error(request, 'Não consegui importar nenhuma linha. Verifique se a planilha está compartilhada com a conta de serviço e se a primeira aba tem os cabeçalhos corretos.')
         return redirect(f"{reverse('preorder_dashboard')}?tab=imports")
 
@@ -1503,10 +1879,16 @@ def preorder_dashboard(request):
 
     auto_imported_count = 0
     auto_deleted_count = 0
+    auto_reserve_failed_count = 0
     if request.method == 'GET' and saved_sheet_link:
-        auto_imported_count, auto_deleted_count = _sync_preorders_from_sheet(saved_sheet_link)
+        auto_imported_count, auto_deleted_count, auto_reserve_failed_count = _sync_preorders_from_sheet(saved_sheet_link)
         if auto_imported_count:
             messages.info(request, f'{auto_imported_count} novas pré-encomendas foram sincronizadas automaticamente.')
+        if auto_reserve_failed_count:
+            messages.warning(
+                request,
+                f'{auto_reserve_failed_count} novas pré-encomendas ficaram sem reserva automática por falta de saldo.',
+            )
 
     preorder_qs = PreOrderRecord.objects.order_by('-created_at')
     preorders = preorder_qs[:50]

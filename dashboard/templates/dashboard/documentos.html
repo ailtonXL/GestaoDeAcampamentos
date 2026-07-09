@@ -1,0 +1,82 @@
+{% extends 'dashboard/base.html' %}
+
+{% block content %}
+<section class="hero-card hero-card--compact">
+    <div>
+        <p class="eyebrow">NoBreak</p>
+        <h2>Documentos importantes</h2>
+        <p class="hero-card__text">Área restrita para guardar arquivos importantes do acampamento.</p>
+    </div>
+    <div class="hero-card__stats">
+        <div>
+            <strong>{{ documentos|length }}</strong>
+            <span>Documentos</span>
+        </div>
+    </div>
+</section>
+
+{% if messages %}
+    {% for message in messages %}
+        <div class="alert alert-{{ message.tags|default:'info' }}">{{ message }}</div>
+    {% endfor %}
+{% endif %}
+
+<section class="panel-card panel-card--spaced">
+    <div class="panel-card__header">
+        <p class="eyebrow">Upload</p>
+        <h3>Novo documento</h3>
+    </div>
+    <form method="post" enctype="multipart/form-data" class="row g-3">
+        {% csrf_token %}
+        <div class="col-12 col-md-5">
+            <label class="form-label" for="{{ form.titulo.id_for_label }}">{{ form.titulo.label }}</label>
+            {{ form.titulo }}
+        </div>
+        <div class="col-12 col-md-4">
+            <label class="form-label" for="{{ form.arquivo.id_for_label }}">{{ form.arquivo.label }}</label>
+            {{ form.arquivo }}
+        </div>
+        <div class="col-12 col-md-3 d-grid align-items-end">
+            <button type="submit" class="btn btn-primary">Salvar documento</button>
+        </div>
+        <div class="col-12">
+            <label class="form-label" for="{{ form.observacoes.id_for_label }}">{{ form.observacoes.label }}</label>
+            {{ form.observacoes }}
+        </div>
+    </form>
+</section>
+
+<section class="panel-card mt-3">
+    <div class="table-responsive">
+        <table class="table team-table align-middle mb-0">
+            <thead>
+                <tr>
+                    <th>Título</th>
+                    <th>Arquivo</th>
+                    <th>Criado por</th>
+                    <th>Data</th>
+                    <th>Ações</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for item in documentos %}
+                    <tr>
+                        <td>{{ item.titulo }}</td>
+                        <td><a href="{{ item.arquivo.url }}" target="_blank" rel="noopener">Abrir</a></td>
+                        <td>{% if item.criado_por %}{{ item.criado_por.username }}{% else %}-{% endif %}</td>
+                        <td>{{ item.criado_em|date:'d/m/Y H:i' }}</td>
+                        <td>
+                            <form method="post" action="{% url 'documento_delete' item.pk %}" class="m-0" onsubmit="return confirm('Deseja excluir este documento?');">
+                                {% csrf_token %}
+                                <button type="submit" class="member-delete-link">Excluir</button>
+                            </form>
+                        </td>
+                    </tr>
+                {% empty %}
+                    <tr><td colspan="5"><p class="empty-state">Nenhum documento cadastrado.</p></td></tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</section>
+{% endblock %}

@@ -25,12 +25,12 @@ class Migration(migrations.Migration):
         migrations.AlterField(
             model_name='inventorysku',
             name='color',
-            field=models.CharField(choices=[('white', 'Branco'), ('black', 'Preto')], max_length=20),
+            field=models.CharField(choices=[('Camisa SEND ME' ), ('Camisa I BELONG TO JESUS')], max_length=20),
         ),
         migrations.AlterField(
             model_name='preorderrecord',
             name='color',
-            field=models.CharField(choices=[('white', 'Branco'), ('black', 'Preto')], max_length=20),
+            field=models.CharField(choices=[('Camisa SEND ME' ), ('Camisa I BELONG TO JESUS')], max_length=20),
         ),
         migrations.AlterField(
             model_name='preorderrecord',
@@ -40,7 +40,7 @@ class Migration(migrations.Migration):
         migrations.AlterField(
             model_name='salerecord',
             name='color',
-            field=models.CharField(choices=[('white', 'Branco'), ('black', 'Preto')], max_length=20),
+            field=models.CharField(choices=[('Camisa SEND ME' ), ('Camisa I BELONG TO JESUS')], max_length=20),
         ),
         migrations.AlterField(
             model_name='salerecord',

@@ -182,6 +182,36 @@ class PreOrderSheetConfig(models.Model):
         return 'Configuração de importação de pré-encomendas'
 
 
+class MembroSheetConfig(models.Model):
+    sheet_link = models.URLField(blank=True)
+    mirror_mode = models.BooleanField(default=True)
+    auto_sync = models.BooleanField(default=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        verbose_name = 'Configuração de importação de membros'
+        verbose_name_plural = 'Configurações de importação de membros'
+
+    def __str__(self):
+        return 'Configuração de importação de membros'
+
+
+class DocumentoImportante(models.Model):
+    titulo = models.CharField(max_length=180)
+    arquivo = models.FileField(upload_to='documentos_importantes/')
+    observacoes = models.TextField(blank=True)
+    criado_por = models.ForeignKey(settings.AUTH_USER_MODEL, null=True, blank=True, on_delete=models.SET_NULL)
+    criado_em = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ['-criado_em']
+        verbose_name = 'Documento importante'
+        verbose_name_plural = 'Documentos importantes'
+
+    def __str__(self):
+        return self.titulo
+
+
 class AconselhamentoSalaCaracteristicaChoices(models.TextChoices):
     MASCULINO = 'masculino', 'Masculino'
     FEMININO = 'feminino', 'Feminino'

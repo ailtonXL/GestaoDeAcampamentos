@@ -13,7 +13,7 @@ class DashboardViewTests(TestCase):
         self.user = get_user_model().objects.create_user(
             username='tester',
             password='Strong1!pass',
-            role='tripe',
+            role='nobreak',
             must_change_password=False,
         )
         self.client.force_login(self.user)

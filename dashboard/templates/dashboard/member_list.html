@@ -53,6 +53,35 @@
     </form>
 </section>
 
+<section class="panel-card panel-card--spaced">
+    <div class="panel-card__header">
+        <p class="eyebrow">Importação</p>
+        <h3>Importar membros da planilha</h3>
+    </div>
+    <form method="post" class="row g-3 align-items-end">
+        {% csrf_token %}
+        <input type="hidden" name="action" value="import_members">
+        <div class="col-12 col-md-9">
+            <label class="form-label" for="{{ member_import_form.sheet_link.id_for_label }}">{{ member_import_form.sheet_link.label }}</label>
+            {{ member_import_form.sheet_link }}
+            <div class="form-text">Cabeçalhos aceitos: nome, equipe/setor, ativo.</div>
+        </div>
+        <div class="col-12 col-md-9">
+            <div class="form-check mb-2">
+                {{ member_import_form.mirror_mode }}
+                <label class="form-check-label" for="{{ member_import_form.mirror_mode.id_for_label }}">{{ member_import_form.mirror_mode.label }}</label>
+            </div>
+            <div class="form-check">
+                {{ member_import_form.auto_sync }}
+                <label class="form-check-label" for="{{ member_import_form.auto_sync.id_for_label }}">{{ member_import_form.auto_sync.label }}</label>
+            </div>
+        </div>
+        <div class="col-12 col-md-3 d-grid">
+            <button type="submit" class="btn btn-outline-primary">Importar membros</button>
+        </div>
+    </form>
+</section>
+
 <section class="panel-card">
     <div class="table-responsive">
         <table class="table team-table align-middle mb-0">

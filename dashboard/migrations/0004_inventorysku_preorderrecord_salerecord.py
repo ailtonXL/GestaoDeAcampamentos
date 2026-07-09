@@ -17,7 +17,7 @@ class Migration(migrations.Migration):
             name='InventorySku',
             fields=[
                 ('id', models.BigAutoField(auto_created=True, primary_key=True, serialize=False, verbose_name='ID')),
-                ('color', models.CharField(choices=[('white', 'White'), ('black', 'Black')], max_length=20)),
+                ('color', models.CharField(choices=[('Camisa SEND ME'), ('Camisa I BELONG TO JESUS')], max_length=20)),
                 ('size', models.CharField(choices=[('xs', 'XS'), ('s', 'S'), ('m', 'M'), ('l', 'L'), ('xl', 'XL'), ('xxl', 'XXL')], max_length=10)),
                 ('initial_quantity', models.PositiveIntegerField(default=0)),
                 ('sold_quantity', models.PositiveIntegerField(default=0)),
@@ -38,7 +38,7 @@ class Migration(migrations.Migration):
                 ('external_key', models.CharField(max_length=80, unique=True)),
                 ('source', models.CharField(choices=[('form', 'Form'), ('sheet', 'Sheet')], default='form', max_length=20)),
                 ('volunteer_name', models.CharField(max_length=120)),
-                ('color', models.CharField(choices=[('white', 'White'), ('black', 'Black')], max_length=20)),
+                ('color', models.CharField(choices=[('Camisa SEND ME'), ('Camisa I BELONG TO JESUS')], max_length=20)),
                 ('size', models.CharField(choices=[('xs', 'XS'), ('s', 'S'), ('m', 'M'), ('l', 'L'), ('xl', 'XL'), ('xxl', 'XXL')], max_length=10)),
                 ('quantity', models.PositiveIntegerField(default=1)),
                 ('status', models.CharField(choices=[('reservado', 'Reservado'), ('importado', 'Importado'), ('sincronizado', 'Sincronizado')], default='reservado', max_length=20)),
@@ -59,7 +59,7 @@ class Migration(migrations.Migration):
             fields=[
                 ('id', models.BigAutoField(auto_created=True, primary_key=True, serialize=False, verbose_name='ID')),
                 ('product_name', models.CharField(max_length=120)),
-                ('color', models.CharField(choices=[('white', 'White'), ('black', 'Black')], max_length=20)),
+                ('color', models.CharField(choices=[('Camisa SEND ME'), ('Camisa I BELONG TO JESUS')], max_length=20)),
                 ('size', models.CharField(choices=[('xs', 'XS'), ('s', 'S'), ('m', 'M'), ('l', 'L'), ('xl', 'XL'), ('xxl', 'XXL')], max_length=10)),
                 ('quantity', models.PositiveIntegerField(default=1)),
                 ('payment_method', models.CharField(choices=[('pix_cash', 'Pix/Cash'), ('card', 'Card')], max_length=20)),

@@ -1,4 +1,4 @@
-from .views import TEAM_META, TEAM_ORDER, _allowed_teams_for_user, _can_access_preparo, _can_view_members_index, _commercial_allowed
+from .views import TEAM_META, TEAM_ORDER, _allowed_teams_for_user, _can_access_documentos, _can_access_preparo, _can_view_members_index, _can_view_overview, _commercial_allowed
 
 
 def sidebar_context(request):
@@ -14,7 +14,9 @@ def sidebar_context(request):
     ]
     return {
         'sidebar_team_links': sidebar_team_links,
+        'can_view_overview': _can_view_overview(request.user),
         'can_view_members_index': _can_view_members_index(request.user),
         'can_view_preparo': _can_access_preparo(request.user),
+        'can_view_documentos': _can_access_documentos(request.user),
         'can_view_commerce': _commercial_allowed(request.user),
     }

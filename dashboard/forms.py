@@ -3,6 +3,7 @@ from django import forms
 from .models import (
     AconselhamentoCampistaSexoChoices,
     AconselhamentoSalaCaracteristicaChoices,
+    DocumentoImportante,
     EquipeChoices,
     InventorySku,
     Membro,
@@ -45,6 +46,42 @@ class MembroForm(forms.ModelForm):
             'nome': forms.TextInput(attrs={'class': 'form-control', 'placeholder': 'Nome da pessoa'}),
             'equipe': forms.Select(attrs={'class': 'form-select'}, choices=EquipeChoices.choices),
             'ativo': forms.CheckboxInput(attrs={'class': 'form-check-input'}),
+        }
+
+
+class MembroImportForm(forms.Form):
+    sheet_link = forms.URLField(
+        required=False,
+        label='Link da planilha',
+        widget=forms.URLInput(attrs={'class': 'form-control', 'placeholder': 'https://docs.google.com/spreadsheets/d/...'}),
+    )
+    mirror_mode = forms.BooleanField(
+        required=False,
+        initial=True,
+        label='Modo espelho (apaga do sistema quem saiu da planilha)',
+        widget=forms.CheckboxInput(attrs={'class': 'form-check-input'}),
+    )
+    auto_sync = forms.BooleanField(
+        required=False,
+        initial=True,
+        label='Atualizar automaticamente ao abrir a aba de membros',
+        widget=forms.CheckboxInput(attrs={'class': 'form-check-input'}),
+    )
+
+
+class DocumentoImportanteForm(forms.ModelForm):
+    class Meta:
+        model = DocumentoImportante
+        fields = ('titulo', 'arquivo', 'observacoes')
+        labels = {
+            'titulo': 'Título',
+            'arquivo': 'Arquivo',
+            'observacoes': 'Observações',
+        }
+        widgets = {
+            'titulo': forms.TextInput(attrs={'class': 'form-control', 'placeholder': 'Nome do documento'}),
+            'arquivo': forms.ClearableFileInput(attrs={'class': 'form-control'}),
+            'observacoes': forms.Textarea(attrs={'class': 'form-control', 'rows': 2, 'placeholder': 'Observações opcionais'}),
         }
 
 
