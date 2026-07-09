@@ -36,7 +36,7 @@
             <form method="post" class="row g-3">
                 {% csrf_token %}
                 <input type="hidden" name="action" value="sale">
-                <div class="col-12 col-md-4">
+                <div class="col-12 col-md-3">
                     <label class="form-label" for="{{ sale_form.product_name.id_for_label }}">{{ sale_form.product_name.label }}</label>
                     {{ sale_form.product_name }}
                     {% for error in sale_form.product_name.errors %}<div class="text-danger small mt-1">{{ error }}</div>{% endfor %}
@@ -56,7 +56,7 @@
                     {{ sale_form.quantity }}
                     {% for error in sale_form.quantity.errors %}<div class="text-danger small mt-1">{{ error }}</div>{% endfor %}
                 </div>
-                <div class="col-6 col-md-2">
+                <div class="col-6 col-md-3">
                     <label class="form-label" for="{{ sale_form.payment_method.id_for_label }}">{{ sale_form.payment_method.label }}</label>
                     {{ sale_form.payment_method }}
                     {% for error in sale_form.payment_method.errors %}<div class="text-danger small mt-1">{{ error }}</div>{% endfor %}
