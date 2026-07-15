@@ -1,11 +1,12 @@
 from decimal import Decimal
+import uuid
 
 from django.test import RequestFactory, TestCase
 from django.urls import reverse
 from django.contrib.auth import get_user_model
 
-from .models import EquipeChoices, Membro, StatusTarefaChoices, Tarefa
-from .views import team_page
+from .models import EquipeChoices, InventorySku, Membro, PaymentMethodChoices, PreOrderPaymentStatusChoices, PreOrderRecord, PreOrderSourceChoices, PreOrderStatusChoices, ProductColorChoices, ProductSizeChoices, StatusTarefaChoices, Tarefa
+from .views import _commercial_totals, team_page
 
 
 class DashboardViewTests(TestCase):
@@ -191,6 +192,123 @@ class DashboardViewTests(TestCase):
         self.assertEqual(response.status_code, 302)
         self.assertEqual(response.url, reverse('logistica'))
         self.assertFalse(Tarefa.objects.filter(pk=task.pk).exists())
+
+
+class CommerceCheckoutTests(TestCase):
+    def setUp(self):
+        self.user = get_user_model().objects.create_user(
+            username='commerce_tester',
+            password='Strong1!pass',
+            role='nobreak',
+            must_change_password=False,
+        )
+        self.client.force_login(self.user)
+
+    def test_checkout_deducts_only_selected_size_sku(self):
+        sku_pp = InventorySku.objects.create(
+            color=ProductColorChoices.WHITE,
+            size=ProductSizeChoices.PP,
+            initial_quantity=10,
+            sold_quantity=0,
+            reserved_quantity=0,
+        )
+        sku_g = InventorySku.objects.create(
+            color=ProductColorChoices.WHITE,
+            size=ProductSizeChoices.G,
+            initial_quantity=10,
+            sold_quantity=0,
+            reserved_quantity=0,
+        )
+
+        response = self.client.post(
+            reverse('commerce_dashboard'),
+            {
+                'action': 'sale',
+                'product_name': 'Pedido teste',
+                'color': ProductColorChoices.WHITE,
+                'size': ProductSizeChoices.G,
+                'quantity': 3,
+                'payment_method': 'pix_cash',
+            },
+        )
+
+        sku_pp.refresh_from_db()
+        sku_g.refresh_from_db()
+
+        self.assertEqual(response.status_code, 302)
+        self.assertEqual(sku_pp.sold_quantity, 0)
+        self.assertEqual(sku_g.sold_quantity, 3)
+
+
+class PreOrderPaymentFlowTests(TestCase):
+    def setUp(self):
+        self.user = get_user_model().objects.create_user(
+            username='preorder_tester',
+            password='Strong1!pass',
+            role='nobreak',
+            must_change_password=False,
+        )
+        self.client.force_login(self.user)
+
+    def test_marking_preorder_paid_moves_reserved_to_sold(self):
+        sku = InventorySku.objects.create(
+            color=ProductColorChoices.WHITE,
+            size=ProductSizeChoices.G,
+            initial_quantity=10,
+            sold_quantity=0,
+            reserved_quantity=3,
+        )
+        preorder = PreOrderRecord.objects.create(
+            external_key=str(uuid.uuid4()),
+            source=PreOrderSourceChoices.FORM,
+            volunteer_name='Teste',
+            color=ProductColorChoices.WHITE,
+            size=ProductSizeChoices.G,
+            quantity=3,
+            payment_status=PreOrderPaymentStatusChoices.PENDENTE,
+            payment_method='',
+            status=PreOrderStatusChoices.RESERVADO,
+            created_by=self.user,
+        )
+
+        response = self.client.post(
+            reverse('preorder_dashboard'),
+            {
+                'action': 'update_payment',
+                'preorder_id': preorder.id,
+                'payment_status': PreOrderPaymentStatusChoices.PAGO,
+                'payment_method': PaymentMethodChoices.PIX_CASH,
+            },
+        )
+
+        preorder.refresh_from_db()
+        sku.refresh_from_db()
+
+        self.assertEqual(response.status_code, 302)
+        self.assertEqual(preorder.payment_status, PreOrderPaymentStatusChoices.PAGO)
+        self.assertEqual(preorder.payment_method, PaymentMethodChoices.PIX_CASH)
+        self.assertEqual(sku.sold_quantity, 3)
+        self.assertEqual(sku.reserved_quantity, 0)
+
+    def test_paid_preorders_are_counted_in_commercial_revenue_totals(self):
+        PreOrderRecord.objects.create(
+            external_key=str(uuid.uuid4()),
+            source=PreOrderSourceChoices.SHEET,
+            volunteer_name='Teste Receita',
+            color=ProductColorChoices.BLACK,
+            size=ProductSizeChoices.M,
+            quantity=2,
+            payment_status=PreOrderPaymentStatusChoices.PAGO,
+            payment_method=PaymentMethodChoices.CARD,
+            status=PreOrderStatusChoices.IMPORTADO,
+            created_by=self.user,
+        )
+
+        total_pix_cash, total_card, total_sales, _preorder_estimate = _commercial_totals()
+
+        self.assertEqual(total_pix_cash, Decimal('0'))
+        self.assertEqual(total_card, Decimal('140.00'))
+        self.assertEqual(total_sales, Decimal('140.00'))
 
 
 class AuthenticationTests(TestCase):

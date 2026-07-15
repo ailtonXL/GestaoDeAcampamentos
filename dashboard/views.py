@@ -134,9 +134,16 @@ def _inventory_matrix():
 
 
 def _commercial_totals():
-    total_pix_cash = SaleRecord.objects.filter(payment_method=PaymentMethodChoices.PIX_CASH).aggregate(total=models.Sum('total_value'))['total'] or Decimal('0')
-    total_card = SaleRecord.objects.filter(payment_method=PaymentMethodChoices.CARD).aggregate(total=models.Sum('total_value'))['total'] or Decimal('0')
-    total_sales = SaleRecord.objects.aggregate(total=models.Sum('total_value'))['total'] or Decimal('0')
+    sale_pix_cash = SaleRecord.objects.filter(payment_method=PaymentMethodChoices.PIX_CASH).aggregate(total=models.Sum('total_value'))['total'] or Decimal('0')
+    sale_card = SaleRecord.objects.filter(payment_method=PaymentMethodChoices.CARD).aggregate(total=models.Sum('total_value'))['total'] or Decimal('0')
+    paid_preorders = PreOrderRecord.objects.filter(payment_status=PreOrderPaymentStatusChoices.PAGO)
+    preorder_pix_qty = paid_preorders.filter(payment_method=PaymentMethodChoices.PIX_CASH).aggregate(total=models.Sum('quantity'))['total'] or 0
+    preorder_card_qty = paid_preorders.filter(payment_method=PaymentMethodChoices.CARD).aggregate(total=models.Sum('quantity'))['total'] or 0
+    preorder_pix_cash = Decimal(preorder_pix_qty) * PIX_CASH_VALUE
+    preorder_card = Decimal(preorder_card_qty) * CARD_VALUE
+    total_pix_cash = sale_pix_cash + preorder_pix_cash
+    total_card = sale_card + preorder_card
+    total_sales = total_pix_cash + total_card
     total_preorders = PreOrderRecord.objects.aggregate(total=models.Sum('quantity'))['total'] or 0
     preorder_estimate = Decimal(total_preorders) * PIX_CASH_VALUE
     return total_pix_cash, total_card, total_sales, preorder_estimate
@@ -568,11 +575,78 @@ def _preorder_has_reserved_inventory(preorder):
 
 def _sell_inventory(color, size, quantity):
     _ensure_inventory_grid()
-    sku = InventorySku.objects.select_for_update().get(color=color, size=size)
+    def _resolve_choice(raw_value, choices):
+        text = str(raw_value or '').strip().lower()
+        for choice_value, choice_label in choices:
+            if text == str(choice_value).strip().lower() or text == str(choice_label).strip().lower():
+                return choice_value
+        return str(raw_value or '').strip().lower()
+
+    normalized_color = _resolve_choice(color, ProductColorChoices.choices)
+    normalized_size = _resolve_choice(size, ProductSizeChoices.choices)
+    sku = InventorySku.objects.select_for_update().filter(
+        color=normalized_color,
+        size=normalized_size,
+    ).first()
+    if sku is None:
+        return False, None
     if sku.balance_quantity < quantity:
         return False, sku
     sku.sold_quantity += quantity
     sku.save(update_fields=['sold_quantity', 'updated_at'])
+    return True, sku
+
+
+def _preorder_unit_value(payment_method):
+    if payment_method == PaymentMethodChoices.PIX_CASH:
+        return PIX_CASH_VALUE
+    if payment_method == PaymentMethodChoices.CARD:
+        return CARD_VALUE
+    return Decimal('0')
+
+
+def _apply_preorder_paid_transition(preorder):
+    """Move preorder stock from reserved to sold when available, or sell directly if not reserved."""
+    _ensure_inventory_grid()
+    sku = InventorySku.objects.select_for_update().get(color=preorder.color, size=preorder.size)
+    quantity = int(preorder.quantity or 0)
+    if quantity <= 0:
+        return True, sku
+
+    has_reserved = _preorder_has_reserved_inventory(preorder)
+    if has_reserved:
+        available_total = sku.balance_quantity + sku.reserved_quantity
+        if available_total < quantity:
+            return False, sku
+        reserved_to_convert = min(sku.reserved_quantity, quantity)
+        sku.reserved_quantity -= reserved_to_convert
+        sku.sold_quantity += quantity
+        sku.save(update_fields=['reserved_quantity', 'sold_quantity', 'updated_at'])
+        return True, sku
+
+    if sku.balance_quantity < quantity:
+        return False, sku
+    sku.sold_quantity += quantity
+    sku.save(update_fields=['sold_quantity', 'updated_at'])
+    return True, sku
+
+
+def _rollback_preorder_paid_transition(preorder):
+    """Reverts stock movement when a paid preorder is set back to pending."""
+    _ensure_inventory_grid()
+    sku = InventorySku.objects.select_for_update().get(color=preorder.color, size=preorder.size)
+    quantity = int(preorder.quantity or 0)
+    if quantity <= 0:
+        return True, sku
+    if sku.sold_quantity < quantity:
+        return False, sku
+
+    sku.sold_quantity -= quantity
+    if _preorder_has_reserved_inventory(preorder):
+        sku.reserved_quantity += quantity
+        sku.save(update_fields=['sold_quantity', 'reserved_quantity', 'updated_at'])
+    else:
+        sku.save(update_fields=['sold_quantity', 'updated_at'])
     return True, sku
 
 
@@ -1860,22 +1934,49 @@ def preorder_dashboard(request):
         preorder_id = request.POST.get('preorder_id')
         preorder = get_object_or_404(PreOrderRecord, pk=preorder_id)
         with transaction.atomic():
-            _release_reserved_inventory(preorder.color, preorder.size, preorder.quantity)
+            if preorder.payment_status == PreOrderPaymentStatusChoices.PAGO:
+                _rollback_preorder_paid_transition(preorder)
+            elif _preorder_has_reserved_inventory(preorder):
+                _release_reserved_inventory(preorder.color, preorder.size, preorder.quantity)
             preorder.delete()
         messages.success(request, 'Pré-encomenda apagada do sistema.')
         return redirect(f"{reverse('preorder_dashboard')}?tab=edit")
 
     if request.method == 'POST' and request.POST.get('action') == 'update_payment' and payment_form.is_valid():
         preorder = get_object_or_404(PreOrderRecord, pk=payment_form.cleaned_data['preorder_id'])
-        preorder.payment_status = payment_form.cleaned_data['payment_status']
+        new_payment_status = payment_form.cleaned_data['payment_status']
         payment_method = (payment_form.cleaned_data.get('payment_method') or '').strip()
-        if preorder.payment_status == PreOrderPaymentStatusChoices.PAGO and not payment_method:
+        if new_payment_status == PreOrderPaymentStatusChoices.PAGO and not payment_method:
             payment_form.add_error('payment_method', 'Escolha a forma de pagamento para marcar como pago.')
         else:
-            preorder.payment_method = payment_method if preorder.payment_status == PreOrderPaymentStatusChoices.PAGO else ''
-            preorder.save(update_fields=['payment_status', 'payment_method'])
-            messages.success(request, 'Forma de pagamento atualizada.')
-            return redirect(f"{reverse('preorder_dashboard')}?tab=edit")
+            with transaction.atomic():
+                was_paid = preorder.payment_status == PreOrderPaymentStatusChoices.PAGO
+                will_be_paid = new_payment_status == PreOrderPaymentStatusChoices.PAGO
+
+                if not was_paid and will_be_paid:
+                    ok, _sku = _apply_preorder_paid_transition(preorder)
+                    if not ok:
+                        payment_form.add_error('payment_status', 'Estoque insuficiente para confirmar este pagamento.')
+                    else:
+                        preorder.payment_status = new_payment_status
+                        preorder.payment_method = payment_method
+                        preorder.save(update_fields=['payment_status', 'payment_method'])
+                elif was_paid and not will_be_paid:
+                    ok, _sku = _rollback_preorder_paid_transition(preorder)
+                    if not ok:
+                        payment_form.add_error('payment_status', 'Não foi possível voltar para pendente porque o estoque vendido ficou inconsistente.')
+                    else:
+                        preorder.payment_status = new_payment_status
+                        preorder.payment_method = ''
+                        preorder.save(update_fields=['payment_status', 'payment_method'])
+                else:
+                    preorder.payment_status = new_payment_status
+                    preorder.payment_method = payment_method if will_be_paid else ''
+                    preorder.save(update_fields=['payment_status', 'payment_method'])
+
+            if not payment_form.errors:
+                messages.success(request, 'Forma de pagamento atualizada.')
+                return redirect(f"{reverse('preorder_dashboard')}?tab=edit")
 
     auto_imported_count = 0
     auto_deleted_count = 0
