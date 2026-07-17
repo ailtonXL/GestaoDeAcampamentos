@@ -361,6 +361,23 @@ class AuthenticationTests(TestCase):
         self.assertEqual(response.status_code, 302)
         self.assertIn(reverse('login'), response.url)
 
+    def test_login_redirects_chefia_aconselhamento_to_team_area(self):
+        self.user_model.objects.create_user(
+            username='chefiaacons',
+            password='Strong1!pass',
+            role='chefia_aconselhamento',
+            must_change_password=False,
+        )
+
+        response = self.client.post(
+            reverse('login'),
+            {'username': 'chefiaacons', 'password': 'Strong1!pass'},
+            follow=True,
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.redirect_chain[-1][0], reverse('aconselhamento'))
+
 
 class ModelTests(TestCase):
     def test_member_string_representation_uses_team_label(self):

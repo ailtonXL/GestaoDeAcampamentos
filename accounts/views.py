@@ -1,6 +1,34 @@
+from django.contrib.auth.decorators import login_required
 from django.contrib.auth.forms import PasswordChangeForm, SetPasswordForm
 from django.contrib.auth.views import PasswordChangeDoneView, PasswordChangeView
+from django.shortcuts import redirect
 from django.urls import reverse_lazy
+
+from .models import User
+
+
+@login_required
+def post_login_redirect(request):
+    user = request.user
+    if user.is_superuser:
+        return redirect('dashboard')
+
+    role_to_area = {
+        User.Role.CHEFIA_LOGISTICA: 'logistica',
+        User.Role.CHEFIA_EVENTOS: 'eventos',
+        User.Role.CHEFIA_ORACAO: 'oracao',
+        User.Role.CHEFIA_PROGRAMA: 'programa',
+        User.Role.CHEFIA_ACONSELHAMENTO: 'aconselhamento',
+        User.Role.CHEFIA_COMUNICACAO: 'comunicacao',
+        User.Role.CHEFIA_LOJINHA_CANTINA: 'lojinha_cantina',
+        User.Role.ADMINISTRACAO: 'administracao',
+        User.Role.CHEFE_PESSOAL: 'pessoal',
+        User.Role.CHEFE_MATERIAIS: 'materiais',
+        User.Role.CHEFE_EQUIPE: 'eventos',
+        User.Role.TRIPE: 'eventos',
+        User.Role.NOBREAK: 'dashboard',
+    }
+    return redirect(role_to_area.get(getattr(user, 'role', ''), 'eventos'))
 
 
 class FirstAccessPasswordChangeView(PasswordChangeView):

@@ -4,7 +4,7 @@ from django.conf.urls.static import static
 from django.urls import include, path
 from django.views.generic import RedirectView
 
-from accounts.views import FirstAccessPasswordChangeDoneView, FirstAccessPasswordChangeView
+from accounts.views import FirstAccessPasswordChangeDoneView, FirstAccessPasswordChangeView, post_login_redirect
 
 urlpatterns = [
     path('admin/', admin.site.urls),
@@ -13,6 +13,7 @@ urlpatterns = [
     path('dashboard/', include('dashboard.urls')),
     path('accounts/password_change/', FirstAccessPasswordChangeView.as_view(), name='password_change'),
     path('accounts/password_change/done/', FirstAccessPasswordChangeDoneView.as_view(), name='password_change_done'),
+    path('accounts/redirect/', post_login_redirect, name='post_login_redirect'),
     path('accounts/', include('django.contrib.auth.urls')),
 ]
 
